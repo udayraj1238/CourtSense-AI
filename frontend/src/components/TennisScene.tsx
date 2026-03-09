@@ -59,9 +59,9 @@ export const TennisScene: React.FC<TennisSceneProps> = ({ ballPos, player1Pos, p
         {/* Ball */}
         <Ball position={ballPos} />
 
-        {/* Players - blue vs red */}
-        <Player position={player1Pos} color="#3b82f6" accentColor="#1e3a5f" />
-        <Player position={player2Pos} color="#ef4444" accentColor="#7f1d1d" />
+        {/* Players - blue (bottom/near) vs red (top/far) */}
+        <Player position={player1Pos} color="#3b82f6" accentColor="#1e3a5f" side="bottom" />
+        <Player position={player2Pos} color="#ef4444" accentColor="#7f1d1d" side="top" />
 
         {/* Camera Controls */}
         <OrbitControls
