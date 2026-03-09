@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Data files (large)
+data/sample_match.mp4
+data/output/
+*.mp4
+*.avi
+
+# Model weights (downloaded at runtime)
+*.pt
+*.pth
+*.onnx
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Gemini/Agent artifacts
+.gemini/
+.agents/
