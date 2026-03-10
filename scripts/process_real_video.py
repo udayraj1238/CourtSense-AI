@@ -174,18 +174,15 @@ def generate_synthetic_ball_trajectory(
     return trajectory
 
 
-def main():
-    print("CourtSense AI: Real Match Video Pipeline (v2)")
+def process_video(video_path: str, output_video_path: str = None) -> list:
+    """
+    Analyzes a tennis video and returns the tracking sequence data.
+    If output_video_path is provided, also saves a visualization video.
+    """
+    print(f"CourtSense AI: Processing Video -> {video_path}")
     
-    video_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'sample_match.mp4')
-    output_json = os.path.join(os.path.dirname(__file__), '..', 'data', 'real_match_data.json')
-    output_video = os.path.join(os.path.dirname(__file__), '..', 'data', 'output', 'real_pipeline_output.mp4')
-    
-    os.makedirs(os.path.dirname(output_video), exist_ok=True)
-
     if not os.path.exists(video_path):
-        print(f"Error: Could not find video at {video_path}")
-        return
+        raise FileNotFoundError(f"Error: Could not find video at {video_path}")
 
     cap = cv2.VideoCapture(video_path)
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -196,7 +193,8 @@ def main():
     if fps == 0 or np.isnan(fps):
        fps = 30.0
        
-    MAX_FRAMES = min(300, total_frames)
+    # Disable the frame cap: process the entire video as requested
+    MAX_FRAMES = total_frames
     
     # 1. Calibration
     src_points = np.array([
@@ -217,6 +215,7 @@ def main():
 
     # 2. Init AI Models
     print("Loading Models...")
+    # NOTE: models are loaded from the root context or their installed location
     pose_estimator = PoseEstimator(model_size='yolov8n-pose.pt')
     ball_tracker = BallTracker(model_size='yolov8n.pt')
 
@@ -228,15 +227,18 @@ def main():
     ball_detect_yolo = 0
     ball_detect_hsv = 0
 
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_video, fourcc, fps, (width, height))
+    out = None
+    if output_video_path:
+        os.makedirs(os.path.dirname(output_video_path), exist_ok=True)
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
     
     for frame_idx in tqdm(range(MAX_FRAMES)):
         ret, frame = cap.read()
         if not ret:
             break
             
-        vis_frame = frame.copy()
+        vis_frame = frame.copy() if out else None
         
         # --- PLAYER TRACKING ---
         detections = pose_estimator.extract_keypoints(frame)
@@ -250,7 +252,8 @@ def main():
                 world_coord = project_player_to_world(base_coord, H)
                 world_x, world_z = clamp_court(float(world_coord[0]), float(world_coord[1]))
                 raw_players.append({"x": world_x, "y": 0.0, "z": world_z})
-                cv2.circle(vis_frame, (int(base_coord[0]), int(base_coord[1])), 8, (255, 0, 0), -1)
+                if out:
+                    cv2.circle(vis_frame, (int(base_coord[0]), int(base_coord[1])), 8, (255, 0, 0), -1)
         
         # Assign stable IDs: sort by Z — highest Z = top, lowest Z = bottom
         players = []
@@ -277,14 +280,16 @@ def main():
         detected_pixel = ball_tracker.detect_ball(frame)
         if detected_pixel is not None:
             ball_detect_yolo += 1
-            cv2.drawMarker(vis_frame, (int(detected_pixel[0]), int(detected_pixel[1])),
-                          (0, 255, 0), cv2.MARKER_CROSS, 20, 2)
+            if out:
+                cv2.drawMarker(vis_frame, (int(detected_pixel[0]), int(detected_pixel[1])),
+                              (0, 255, 0), cv2.MARKER_CROSS, 20, 2)
         else:
             detected_pixel = detect_ball_hsv(frame)
             if detected_pixel is not None:
                 ball_detect_hsv += 1
-                cv2.drawMarker(vis_frame, (int(detected_pixel[0]), int(detected_pixel[1])),
-                              (255, 255, 0), cv2.MARKER_CROSS, 20, 2)
+                if out:
+                    cv2.drawMarker(vis_frame, (int(detected_pixel[0]), int(detected_pixel[1])),
+                                  (255, 255, 0), cv2.MARKER_CROSS, 20, 2)
         
         frame_records.append({
             "frame_index": frame_idx,
@@ -292,10 +297,12 @@ def main():
             "real_ball_pixel": detected_pixel.tolist() if detected_pixel is not None else None,
         })
         
-        out.write(vis_frame)
+        if out:
+            out.write(vis_frame)
 
     cap.release()
-    out.release()
+    if out:
+        out.release()
     
     total_ball_detections = ball_detect_yolo + ball_detect_hsv
     
@@ -304,36 +311,15 @@ def main():
     print(f"  Real ball detections: {total_ball_detections}/{MAX_FRAMES} "
           f"(YOLO: {ball_detect_yolo}, HSV: {ball_detect_hsv})")
     
-    if total_ball_detections > MAX_FRAMES * 0.3:
-        # Enough real detections — use Kalman filter on real data
-        print("  → Using real ball detections with Kalman smoothing")
-        predictor = TrajectoryPredictor(dt=1/fps)
-        ball_trajectory = []
-        for rec in frame_records:
-            pix = rec["real_ball_pixel"]
-            if pix is not None:
-                state = predictor.update(np.array(pix))
-            else:
-                state = predictor.predict()
-            
-            smoothed = np.array([state[0], state[1]])
-            world_ball = project_player_to_world(smoothed, H)
-            bx = max(-10.0, min(10.0, float(world_ball[0])))
-            bz = max(-18.0, min(18.0, float(world_ball[1])))
-            by_pixel = smoothed[1]
-            by = max(0.0, (height/2 - by_pixel) * 0.01)
-            
-            ball_trajectory.append({
-                "position": {"x": round(bx,3), "y": round(by,3), "z": round(bz,3)},
-                "is_occluded": pix is None
-            })
-    else:
-        # Not enough detections — generate physics-based synthetic trajectory
-        print("  → Ball detection insufficient — generating physics-based synthetic trajectory")
-        print("  → Uses Kalman Filter + Magnus effect equations from Phase 4")
-        ball_trajectory = generate_synthetic_ball_trajectory(
-            len(frame_records), frame_records, fps
-        )
+    # Always use the physics-based synthetic trajectory to avoid erratic 3D mapping jumps.
+    # A single 2D camera cannot accurately provide 3D depth for a ball in the air
+    # via ground-plane homography. The synthetic trajectory uses actual Kalman 
+    # physics to rally between the detected player positions smoothly.
+    print("  → Using physics-based synthetic trajectory for smooth 3D rallies")
+    print("  → Uses Kalman Filter + Magnus effect equations from Phase 4")
+    ball_trajectory = generate_synthetic_ball_trajectory(
+        len(frame_records), frame_records, fps
+    )
     
     # Pass 3: Calculate per-frame speed & spin from ball trajectory
     print("Pass 3: Computing ball speed & spin rate per frame...")
@@ -344,7 +330,6 @@ def main():
         bp = ball["position"]
         
         # --- Ball Speed (km/h) ---
-        # Speed = 3D distance between consecutive ball positions / dt, converted to km/h
         if i > 0:
             prev_bp = ball_trajectory[i - 1]["position"]
             dx = bp["x"] - prev_bp["x"]
@@ -356,18 +341,14 @@ def main():
         else:
             speed_kmh = 0.0
         
-        # Clamp to realistic tennis speed range (0–250 km/h)
         speed_kmh = round(min(250.0, max(0.0, speed_kmh)), 1)
         
         # --- Spin Rate (rpm) estimate ---
-        # Estimated from vertical curvature: higher curvature = more topspin
-        # We approximate curvature from 3 consecutive Y positions (2nd derivative)
         if 0 < i < len(ball_trajectory) - 1:
             y_prev = ball_trajectory[i - 1]["position"]["y"]
             y_curr = bp["y"]
             y_next = ball_trajectory[i + 1]["position"]["y"]
             curvature = abs(y_prev - 2 * y_curr + y_next)  # finite difference
-            # Map curvature to RPM: scale factor chosen so typical rally ≈ 1500–3000 rpm
             spin_rpm = round(min(4500.0, 800.0 + curvature * 8000.0), 0)
         else:
             spin_rpm = 800.0
@@ -383,10 +364,9 @@ def main():
     # Pass 4: Smooth player positions (outlier rejection + EMA) and speed/spin values
     print("Pass 4: Smoothing player positions & stats...")
     MAX_JUMP = 3.0   # Reject jumps > 3m per frame (unrealistic for 30fps)
-    EMA_ALPHA = 0.3   # Smoothing factor: lower = smoother (0.3 = responsive but smooth)
+    EMA_ALPHA = 0.3   # Smoothing factor
     SPEED_WINDOW = 5  # Rolling average window for speed/spin
     
-    # --- Smooth player positions ---
     smooth_pos = {}  # { player_id: {"x": float, "z": float} }
     
     for frame in sequence_data:
@@ -395,30 +375,24 @@ def main():
             pos = player["position"]
             
             if pid not in smooth_pos:
-                # First appearance: initialize
                 smooth_pos[pid] = {"x": pos["x"], "z": pos["z"]}
             else:
-                # Check for outlier jump
                 dx = pos["x"] - smooth_pos[pid]["x"]
                 dz = pos["z"] - smooth_pos[pid]["z"]
                 dist = (dx*dx + dz*dz) ** 0.5
                 
                 if dist > MAX_JUMP:
-                    # Reject outlier: use previous smoothed position
                     pos["x"] = smooth_pos[pid]["x"]
                     pos["z"] = smooth_pos[pid]["z"]
                 else:
-                    # EMA smooth
                     pos["x"] = EMA_ALPHA * pos["x"] + (1 - EMA_ALPHA) * smooth_pos[pid]["x"]
                     pos["z"] = EMA_ALPHA * pos["z"] + (1 - EMA_ALPHA) * smooth_pos[pid]["z"]
                     smooth_pos[pid]["x"] = pos["x"]
                     smooth_pos[pid]["z"] = pos["z"]
             
-            # Round for cleaner output
             pos["x"] = round(pos["x"], 3)
             pos["z"] = round(pos["z"], 3)
     
-    # --- Smooth speed & spin with rolling average ---
     raw_speeds = [f.get("ball_speed_kmh", 0) for f in sequence_data]
     raw_spins  = [f.get("spin_rate_rpm", 800) for f in sequence_data]
     
@@ -432,21 +406,27 @@ def main():
             sum(raw_spins[window_start:window_end]) / (window_end - window_start), 0
         )
     
-    # Export JSON
-    with open(output_json, 'w') as f:
-        json.dump({"sequence": sequence_data}, f, indent=4)
-    
-    # Stats
     p2_frames = sum(1 for f in sequence_data if len(f["players"]) >= 2)
     vis_ball = sum(1 for b in ball_trajectory if not b["is_occluded"])
-    print(f"\n{'='*50}")
-    print(f"Pipeline Complete!")
-    print(f"{'='*50}")
-    print(f"Frames processed: {len(sequence_data)}")
-    print(f"Frames with 2+ players: {p2_frames}/{len(sequence_data)}")
-    print(f"Ball visible frames: {vis_ball}/{len(sequence_data)}")
-    print(f"Data → {output_json}")
-    print(f"Video → {output_video}")
+    print(f"\nPipeline Complete! {len(sequence_data)} frames processed.")
+    
+    return sequence_data
+
+def main():
+    print("CourtSense AI: Real Match Video Pipeline (v2)")
+    video_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'sample_match.mp4')
+    output_json = os.path.join(os.path.dirname(__file__), '..', 'data', 'real_match_data.json')
+    output_video = os.path.join(os.path.dirname(__file__), '..', 'data', 'output', 'real_pipeline_output.mp4')
+    
+    # Use the new refactored function
+    sequence_data = process_video(video_path, output_video)
+    
+    if sequence_data:
+        # Export JSON
+        with open(output_json, 'w') as f:
+            json.dump({"sequence": sequence_data}, f, indent=4)
+        print(f"Data saved to {output_json}")
 
 if __name__ == "__main__":
     main()
+

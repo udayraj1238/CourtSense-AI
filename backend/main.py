@@ -1,16 +1,23 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from models import SequenceResponse, FrameData, BallState, Coordinate, PlayerState
 import numpy as np
 import json
 import os
+import shutil
+import tempfile
+import sys
+
+# Add scripts directory to path to import process_real_video
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from scripts.process_real_video import process_video
 
 app = FastAPI(title="CourtSense AI API")
 
 # Configure CORS for the frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"], # Typical Vite/CRA ports
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -19,6 +26,42 @@ app.add_middleware(
 @app.get("/health")
 def health_check():
     return {"status": "ok", "message": "CourtSense AI Backend is running."}
+
+@app.post("/api/v1/tracking/upload", response_model=SequenceResponse)
+async def upload_and_process_video(file: UploadFile = File(...)):
+    """
+    Receives a video file, processes it synchronously using the CV pipeline,
+    and returns the 3D tracking sequence data.
+    """
+    if not file.content_type.startswith('video/'):
+        raise HTTPException(status_code=400, detail="File provided is not a video.")
+    
+    # Save uploaded file to a temporary location
+    try:
+        suffix = os.path.splitext(file.filename)[1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp_file:
+            shutil.copyfileobj(file.file, tmp_file)
+            tmp_path = tmp_file.name
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save uploaded video: {str(e)}")
+    
+    try:
+        # Process the video (this will block the thread for a while)
+        sequence_data = process_video(tmp_path)
+        
+        # Clean up temp file
+        os.remove(tmp_path)
+        
+        if not sequence_data:
+             raise HTTPException(status_code=500, detail="Video processing failed to produce tracking data.")
+             
+        return SequenceResponse(sequence=sequence_data)
+        
+    except Exception as e:
+        # Clean up temp file on error
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise HTTPException(status_code=500, detail=f"Error processing video: {str(e)}")
 
 @app.get("/api/v1/tracking/sequence", response_model=SequenceResponse)
 def get_mock_tracking_sequence():
@@ -92,3 +135,4 @@ def get_real_tracking_sequence():
         raise HTTPException(status_code=404, detail="Real match data JSON not found. Please run the processing script first.")
     except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail="Error decoding the match data JSON.")
+

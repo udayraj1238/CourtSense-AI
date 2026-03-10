@@ -1,0 +1,35 @@
+
+C:\Users\Uday Raj\OneDrive\Desktop\CODES\CourtSense-AI\frontend\src\App.tsx
+  35:13  error  Error: Cannot access variable before it is declared
+
+`updatePositions` is accessed before it is declared, which prevents the earlier access from updating when this value changes over time.
+
+C:\Users\Uday Raj\OneDrive\Desktop\CODES\CourtSense-AI\frontend\src\App.tsx:35:13
+  33 |         setIsLoading(false);
+  34 |         if (res.data.sequence.length > 0) {
+> 35 |             updatePositions(res.data.sequence[0]);
+     |             ^^^^^^^^^^^^^^^ `updatePositions` accessed before it is declared
+  36 |         }
+  37 |       })
+  38 |       .catch(err => {
+
+C:\Users\Uday Raj\OneDrive\Desktop\CODES\CourtSense-AI\frontend\src\App.tsx:44:3
+  42 |   }, []);
+  43 |
+> 44 |   const updatePositions = (frameData: FrameData) => {
+     |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 45 |     if (frameData.ball) {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^
+> 46 |       setBallPos([frameData.ball.position.x, frameData.ball.position.y, frameData.ball.position.z]);
+     …
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^
+> 57 |     if (frameData.spin_rate_rpm !== undefined) setSpinRate(frameData.spin_rate_rpm);
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^
+> 58 |   };
+     | ^^^^^ `updatePositions` is declared here
+  59 |
+  60 |   useEffect(() => {
+  61 |     let animationFrameId: number;  react-hooks/immutability
+
+✖ 1 problem (1 error, 0 warnings)
+
