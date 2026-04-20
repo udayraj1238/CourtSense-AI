@@ -1,0 +1,10 @@
+frontend/
+.git/
+.vscode/
+.gemini/
+__pycache__/
+*.pyc
+.env
+.venv/
+colab_backend.ipynb
+data/output/

@@ -193,15 +193,21 @@ def process_video(video_path: str, output_video_path: str = None) -> list:
     if fps == 0 or np.isnan(fps):
        fps = 30.0
        
-    # Disable the frame cap: process the entire video as requested
-    MAX_FRAMES = total_frames
+    # Cap processing to max 150 frames (approx 5 seconds) for web-app performance
+    MAX_FRAMES = min(total_frames, 150)
     
-    # 1. Calibration
+    # Calculate resize scale (downmix to ~640px width to massively speed up YOLO)
+    TARGET_WIDTH = 640
+    scale = TARGET_WIDTH / width if width > TARGET_WIDTH else 1.0
+    process_w = int(width * scale)
+    process_h = int(height * scale)
+    
+    # 1. Calibration on resized dimensions
     src_points = np.array([
-        [width*0.25, height*0.4], 
-        [width*0.75, height*0.4], 
-        [width*0.95, height*0.9], 
-        [width*0.05, height*0.9]
+        [process_w*0.25, process_h*0.4], 
+        [process_w*0.75, process_h*0.4], 
+        [process_w*0.95, process_h*0.9], 
+        [process_w*0.05, process_h*0.9]
     ], dtype=np.float32)
 
     dst_points = np.array([
@@ -237,6 +243,9 @@ def process_video(video_path: str, output_video_path: str = None) -> list:
         ret, frame = cap.read()
         if not ret:
             break
+            
+        if scale != 1.0:
+            frame = cv2.resize(frame, (process_w, process_h))
             
         vis_frame = frame.copy() if out else None
         
