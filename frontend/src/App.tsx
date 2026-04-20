@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { TennisScene } from './components/TennisScene';
 import {
   Play, Pause, RotateCcw, Upload, Zap, Eye, Target,
-  ChevronLeft, ChevronRight, Video,
+  ChevronLeft, ChevronRight, Video, Settings, X,
 } from 'lucide-react';
 import axios from 'axios';
 import './index.css';
@@ -21,7 +21,6 @@ interface FrameData {
 }
 interface SequenceResponse { sequence: FrameData[]; }
 
-const BACKEND_URL = 'http://localhost:8000';
 const TRAIL_LENGTH = 20; // Number of ball trail history dots
 const SPEED_OPTIONS = [0.25, 0.5, 1, 2];
 
@@ -66,6 +65,12 @@ function App() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [speed, setSpeed] = useState(1);
   const [cameraPreset, setCameraPreset] = useState<'default' | 'overhead' | 'p1' | 'p2'>('default');
+  
+  const [backendUrl, setBackendUrl] = useState(() => 
+    localStorage.getItem('courtsense_backend_url') || 'http://localhost:8000'
+  );
+  const [showSettings, setShowSettings] = useState(false);
+  const [tempUrlInput, setTempUrlInput] = useState('');
 
   const [ballPos, setBallPos] = useState<[number, number, number]>([0, 1, 0]);
   const [p1Pos, setP1Pos] = useState<[number, number, number]>([0, 0, 10]);
@@ -83,7 +88,10 @@ function App() {
   const loadDemo = () => {
     setAppState('processing');
     // Try backend first, fallback to static demo data for deployed site
-    axios.get<SequenceResponse>(`${BACKEND_URL}/api/v1/tracking/real`, { timeout: 3000 })
+    axios.get<SequenceResponse>(`${backendUrl}/api/v1/tracking/real`, { 
+      timeout: 3000,
+      headers: { 'Bypass-Tunnel-Reminder': 'true' }
+    })
       .then(res => {
         setSequenceData(res.data.sequence);
         if (res.data.sequence.length > 0) {
@@ -126,8 +134,11 @@ function App() {
     formData.append('file', file);
 
     try {
-      const res = await axios.post<SequenceResponse>(`${BACKEND_URL}/api/v1/tracking/upload`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      const res = await axios.post<SequenceResponse>(`${backendUrl}/api/v1/tracking/upload`, formData, {
+        headers: { 
+          'Content-Type': 'multipart/form-data',
+          'Bypass-Tunnel-Reminder': 'true'
+        },
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 1));
           setUploadProgress(percentCompleted);
@@ -340,6 +351,53 @@ function App() {
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
+        {/* Top Right Settings Button */}
+        <button 
+          className="settings-toggle-btn glass"
+          onClick={() => { setTempUrlInput(backendUrl); setShowSettings(true); }}
+        >
+          <Settings size={20} />
+        </button>
+
+        {/* Settings Modal */}
+        {showSettings && (
+          <div className="settings-modal-overlay">
+            <div className="settings-modal blur-md glass-heavy">
+              <button className="settings-close" onClick={() => setShowSettings(false)}>
+                <X size={20} />
+              </button>
+              <h2>Backend Configuration</h2>
+              <p>Enter your local Fast API backend URL or Google Colab online URL to process new videos:</p>
+              <input 
+                type="text" 
+                value={tempUrlInput}
+                onChange={(e) => setTempUrlInput(e.target.value)}
+                placeholder="https://your-localtunnel-url.loca.lt"
+                className="url-input"
+              />
+              <button 
+                className="save-url-btn"
+                onClick={() => {
+                  let cleanUrl = tempUrlInput.trim();
+                  if(cleanUrl.endsWith('/')) cleanUrl = cleanUrl.slice(0, -1);
+                  setBackendUrl(cleanUrl);
+                  localStorage.setItem('courtsense_backend_url', cleanUrl);
+                  setShowSettings(false);
+                }}
+              >
+                Save URL
+              </button>
+              
+              <div style={{ marginTop: '20px', fontSize: '13px', color: 'var(--text-muted)' }}>
+                <p><strong>Free Online Processing:</strong></p>
+                <a href="https://colab.research.google.com/github/udayraj1238/CourtSense-AI/blob/main/colab_backend.ipynb" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', textDecoration: 'underline' }}>
+                  Run our free Google Colab backend
+                </a> and paste the link here!
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Background Effects */}
         <div className="landing-grid" />
         <div className="landing-glow" />
