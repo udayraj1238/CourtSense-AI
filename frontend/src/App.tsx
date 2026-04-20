@@ -1,60 +1,122 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { TennisScene } from './components/TennisScene';
-import { Play, Pause, RotateCcw, Activity, Upload, CheckCircle2 } from 'lucide-react';
+import {
+  Play, Pause, RotateCcw, Upload, Zap, Eye, Target,
+  ChevronLeft, ChevronRight, Video,
+} from 'lucide-react';
 import axios from 'axios';
 import './index.css';
+import './App.css';
 
+/* ===== Types ===== */
 interface Coordinate { x: number; y: number; z: number; }
 interface PlayerState { id: string; position: Coordinate; }
 interface BallState { position: Coordinate; is_occluded: boolean; }
-interface FrameData { frame_index: number; ball: BallState | null; players: PlayerState[]; ball_speed_kmh?: number; spin_rate_rpm?: number; }
+interface FrameData {
+  frame_index: number;
+  ball: BallState | null;
+  players: PlayerState[];
+  ball_speed_kmh?: number;
+  spin_rate_rpm?: number;
+}
 interface SequenceResponse { sequence: FrameData[]; }
 
 const BACKEND_URL = 'http://localhost:8000';
+const TRAIL_LENGTH = 20; // Number of ball trail history dots
+const SPEED_OPTIONS = [0.25, 0.5, 1, 2];
 
+/* ===== Particles Background ===== */
+function Particles() {
+  const particles = useMemo(() =>
+    Array.from({ length: 30 }, () => ({
+      left: Math.random() * 100,
+      delay: Math.random() * 8,
+      duration: 8 + Math.random() * 12,
+      size: 1 + Math.random() * 2,
+      bottom: -10 - Math.random() * 20,
+    })), []
+  );
+
+  return (
+    <div className="particles-container">
+      {particles.map((p, i) => (
+        <div
+          key={i}
+          className="particle"
+          style={{
+            left: `${p.left}%`,
+            bottom: `${p.bottom}%`,
+            width: `${p.size}px`,
+            height: `${p.size}px`,
+            animationDelay: `${p.delay}s`,
+            animationDuration: `${p.duration}s`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/* ===== Main App ===== */
 function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [frame, setFrame] = useState(0);
   const [sequenceData, setSequenceData] = useState<FrameData[]>([]);
-  
-  // App States: 'idle' (waiting for video) -> 'uploading' -> 'processing' -> 'ready' (showing 3D)
   const [appState, setAppState] = useState<'idle' | 'uploading' | 'processing' | 'ready'>('idle');
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [speed, setSpeed] = useState(1);
+  const [cameraPreset, setCameraPreset] = useState<'default' | 'overhead' | 'p1' | 'p2'>('default');
 
   const [ballPos, setBallPos] = useState<[number, number, number]>([0, 1, 0]);
   const [p1Pos, setP1Pos] = useState<[number, number, number]>([0, 0, 10]);
   const [p2Pos, setP2Pos] = useState<[number, number, number]>([0, 0, -10]);
   const [ballSpeed, setBallSpeed] = useState(0);
   const [spinRate, setSpinRate] = useState(0);
-  
+  const [ballTrail, setBallTrail] = useState<[number, number, number][]>([]);
+
   const frameRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const trailRef = useRef<[number, number, number][]>([]);
+  const [isDragging, setIsDragging] = useState(false);
 
-  // Load a demo by default on idle if the user clicked "Load Demo"
+  /* --- Data Loading --- */
   const loadDemo = () => {
     setAppState('processing');
-    axios.get<SequenceResponse>(`${BACKEND_URL}/api/v1/tracking/real`)
+    // Try backend first, fallback to static demo data for deployed site
+    axios.get<SequenceResponse>(`${BACKEND_URL}/api/v1/tracking/real`, { timeout: 3000 })
       .then(res => {
         setSequenceData(res.data.sequence);
         if (res.data.sequence.length > 0) {
-            updatePositions(res.data.sequence[0]);
+          updatePositions(res.data.sequence[0]);
         }
         setAppState('ready');
       })
-      .catch(err => {
-        console.error("Failed to fetch tracking data:", err);
-        setAppState('idle');
-        alert("Failed to load demo data.");
+      .catch(() => {
+        // Backend unavailable — load static demo data
+        console.log("Backend unavailable, loading static demo data...");
+        fetch(`${import.meta.env.BASE_URL}demo_data.json`)
+          .then(r => r.json())
+          .then((data: SequenceResponse) => {
+            setSequenceData(data.sequence);
+            if (data.sequence.length > 0) {
+              updatePositions(data.sequence[0]);
+            }
+            setAppState('ready');
+          })
+          .catch(err2 => {
+            console.error("Failed to load demo data:", err2);
+            setAppState('idle');
+            alert("Failed to load demo data. Make sure the backend is running or demo_data.json exists.");
+          });
       });
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
-    
     const file = e.target.files[0];
     if (!file.type.startsWith('video/')) {
-        alert("Please select a valid video file.");
-        return;
+      alert("Please select a valid video file.");
+      return;
     }
 
     setAppState('uploading');
@@ -64,67 +126,109 @@ function App() {
     formData.append('file', file);
 
     try {
-        const res = await axios.post<SequenceResponse>(`${BACKEND_URL}/api/v1/tracking/upload`, formData, {
-            headers: { 'Content-Type': 'multipart/form-data' },
-            onUploadProgress: (progressEvent) => {
-                const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 1));
-                setUploadProgress(percentCompleted);
-                if (percentCompleted === 100) {
-                     setAppState('processing');
-                }
-            }
-        });
-
-        setSequenceData(res.data.sequence);
-        if (res.data.sequence.length > 0) {
-            updatePositions(res.data.sequence[0]);
+      const res = await axios.post<SequenceResponse>(`${BACKEND_URL}/api/v1/tracking/upload`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / (progressEvent.total || 1));
+          setUploadProgress(percentCompleted);
+          if (percentCompleted === 100) {
+            setAppState('processing');
+          }
         }
-        setAppState('ready');
+      });
+
+      setSequenceData(res.data.sequence);
+      if (res.data.sequence.length > 0) {
+        updatePositions(res.data.sequence[0]);
+      }
+      setAppState('ready');
     } catch (err) {
-        console.error("Failed to upload and process video:", err);
-        alert("Failed to process the video. See console for details.");
-        setAppState('idle');
+      console.error("Failed to upload and process video:", err);
+      alert("Failed to process the video. See console for details.");
+      setAppState('idle');
     }
-    
-    // reset input
+
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  function updatePositions(frameData: FrameData) {
+  /* --- Drag and Drop --- */
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      const file = files[0];
+      if (file.type.startsWith('video/')) {
+        // Trigger the same upload flow
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        if (fileInputRef.current) {
+          fileInputRef.current.files = dataTransfer.files;
+          fileInputRef.current.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      } else {
+        alert("Please drop a video file.");
+      }
+    }
+  }, []);
+
+  /* --- Position Updates --- */
+  const updatePositions = useCallback((frameData: FrameData) => {
     if (frameData.ball) {
-      setBallPos([frameData.ball.position.x, frameData.ball.position.y, frameData.ball.position.z]);
+      const newPos: [number, number, number] = [
+        frameData.ball.position.x,
+        frameData.ball.position.y,
+        frameData.ball.position.z,
+      ];
+      setBallPos(newPos);
+
+      // Update trail
+      trailRef.current = [...trailRef.current.slice(-(TRAIL_LENGTH - 1)), newPos];
+      setBallTrail([...trailRef.current]);
     }
     for (const player of frameData.players) {
       const pos: [number, number, number] = [player.position.x, player.position.y, player.position.z];
       if (player.id.includes('top')) {
-        setP1Pos(pos);
+        setP1Pos(pos); // top player is P1 (the far player)
       } else if (player.id.includes('bottom')) {
-        setP2Pos(pos);
+        setP2Pos(pos); // bottom player is P2 (near)  
       }
     }
     if (frameData.ball_speed_kmh !== undefined) setBallSpeed(frameData.ball_speed_kmh);
     if (frameData.spin_rate_rpm !== undefined) setSpinRate(frameData.spin_rate_rpm);
-  }
+  }, []);
 
+  /* --- Animation Loop --- */
   useEffect(() => {
     let animationFrameId: number;
     let lastTime = performance.now();
-    const fps = 30;
-    const frameInterval = 1000 / fps;
+    const baseFps = 30;
 
     const renderLoop = (time: number) => {
       if (isPlaying && sequenceData.length > 0 && appState === 'ready') {
+        const frameInterval = 1000 / (baseFps * speed);
         const deltaTime = time - lastTime;
-        
+
         if (deltaTime >= frameInterval) {
-            let nextFrame = frameRef.current + 1;
-            if (nextFrame >= sequenceData.length) {
-                nextFrame = 0;
-            }
-            frameRef.current = nextFrame;
-            setFrame(nextFrame);
-            updatePositions(sequenceData[nextFrame]);
-            lastTime = time - (deltaTime % frameInterval);
+          let nextFrame = frameRef.current + 1;
+          if (nextFrame >= sequenceData.length) {
+            nextFrame = 0;
+            // Reset trail on loop
+            trailRef.current = [];
+          }
+          frameRef.current = nextFrame;
+          setFrame(nextFrame);
+          updatePositions(sequenceData[nextFrame]);
+          lastTime = time - (deltaTime % frameInterval);
         }
       }
       animationFrameId = requestAnimationFrame(renderLoop);
@@ -137,182 +241,415 @@ function App() {
     return () => {
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
     };
-  }, [isPlaying, sequenceData, appState]);
+  }, [isPlaying, sequenceData, appState, speed, updatePositions]);
 
+  /* --- Keyboard Shortcuts --- */
+  useEffect(() => {
+    if (appState !== 'ready') return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't capture when typing in inputs
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      switch (e.code) {
+        case 'Space':
+          e.preventDefault();
+          setIsPlaying(prev => !prev);
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          if (sequenceData.length > 0) {
+            setIsPlaying(false);
+            const next = Math.min(frameRef.current + 1, sequenceData.length - 1);
+            frameRef.current = next;
+            setFrame(next);
+            updatePositions(sequenceData[next]);
+          }
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          if (sequenceData.length > 0) {
+            setIsPlaying(false);
+            const prev = Math.max(frameRef.current - 1, 0);
+            frameRef.current = prev;
+            setFrame(prev);
+            updatePositions(sequenceData[prev]);
+          }
+          break;
+        case 'KeyR':
+          resetSimulation();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [appState, sequenceData, updatePositions]);
+
+  /* --- Controls --- */
   const togglePlay = () => setIsPlaying(!isPlaying);
-  
+
   const resetSimulation = () => {
     setIsPlaying(false);
     frameRef.current = 0;
     setFrame(0);
+    trailRef.current = [];
+    setBallTrail([]);
     if (sequenceData.length > 0) {
-        updatePositions(sequenceData[0]);
+      updatePositions(sequenceData[0]);
     }
+  };
+
+  const seekToFrame = (targetFrame: number) => {
+    const clamped = Math.max(0, Math.min(targetFrame, sequenceData.length - 1));
+    frameRef.current = clamped;
+    setFrame(clamped);
+    // Rebuild trail up to this point
+    const trailStart = Math.max(0, clamped - TRAIL_LENGTH);
+    const newTrail: [number, number, number][] = [];
+    for (let i = trailStart; i <= clamped; i++) {
+      const fd = sequenceData[i];
+      if (fd.ball) {
+        newTrail.push([fd.ball.position.x, fd.ball.position.y, fd.ball.position.z]);
+      }
+    }
+    trailRef.current = newTrail;
+    setBallTrail([...newTrail]);
+    updatePositions(sequenceData[clamped]);
+  };
+
+  const handleTimelineClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (sequenceData.length === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const targetFrame = Math.round(pct * (sequenceData.length - 1));
+    seekToFrame(targetFrame);
   };
 
   const totalFrames = sequenceData.length || 1;
   const progress = (frame / totalFrames) * 100;
 
-  // --- RENDERING UPLOAD UI ---
+  /* ============================
+   *   LANDING PAGE
+   * ============================ */
   if (appState !== 'ready') {
-      return (
-        <div className="w-full h-screen bg-neutral-950 text-white flex flex-col items-center justify-center font-sans overflow-hidden pattern-bg relative">
-            {/* Minimal Grid Background */}
-            <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:64px_64px] [mask-image:radial-gradient(ellipse_60%_60%_at_50%_50%,#000_70%,transparent_100%)]"></div>
-            
-            <div className="z-10 text-center max-w-lg w-full px-6">
-                 <div className="mb-10 inline-block px-4 py-1.5 rounded-full bg-lime-500/10 border border-lime-500/20 text-lime-400 text-xs font-bold tracking-widest uppercase">
-                    CourtSense AI V2
-                 </div>
-                 <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-white leading-tight mb-4">
-                     Welcome to the Court.
-                 </h1>
-                 <p className="text-neutral-400 text-lg mb-10 leading-relaxed font-light">
-                     Upload any tennis match video and our AI pipeline will extract 3D telemetry, player biometrics, and ball physics in real-time.
-                 </p>
+    return (
+      <div
+        className="landing-page"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {/* Background Effects */}
+        <div className="landing-grid" />
+        <div className="landing-glow" />
+        <Particles />
 
-                 {appState === 'idle' && (
-                     <div className="flex flex-col gap-4">
-                         <input 
-                            type="file" 
-                            accept="video/mp4,video/quicktime,video/webm" 
-                            className="hidden" 
-                            ref={fileInputRef}
-                            onChange={handleFileUpload}
-                         />
-                         <button 
-                            onClick={() => fileInputRef.current?.click()}
-                            className="group relative flex items-center justify-center gap-3 w-full bg-lime-500 hover:bg-lime-400 text-black font-bold text-lg py-4 rounded-2xl transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] shadow-[0_0_20px_rgba(132,204,22,0.2)] hover:shadow-[0_0_30px_rgba(132,204,22,0.4)]"
-                         >
-                            <Upload className="transition-transform group-hover:-translate-y-1" />
-                            Select Video to Analyze
-                         </button>
-                         <button 
-                            onClick={loadDemo}
-                            className="text-neutral-500 hover:text-white transition-colors text-sm font-medium py-2"
-                         >
-                             Or load pre-generated demo data
-                         </button>
-                     </div>
-                 )}
-
-                 {appState === 'uploading' && (
-                     <div className="bg-neutral-900 border border-white/10 rounded-3xl p-8 shadow-2xl">
-                         <div className="flex justify-between items-end mb-4">
-                             <div className="flex items-center gap-3">
-                                <Upload className="animate-bounce text-lime-400" size={24} />
-                                <span className="font-semibold text-lg">Uploading Video...</span>
-                             </div>
-                             <span className="font-mono text-lime-400 text-xl">{uploadProgress}%</span>
-                         </div>
-                         <div className="w-full h-2 bg-neutral-800 rounded-full overflow-hidden">
-                             <div 
-                                className="h-full bg-lime-500 rounded-full transition-all duration-300" 
-                                style={{ width: `${uploadProgress}%` }}
-                             />
-                         </div>
-                     </div>
-                 )}
-
-                 {appState === 'processing' && (
-                     <div className="bg-neutral-900 border border-white/10 rounded-3xl p-8 shadow-2xl flex flex-col items-center">
-                         <div className="relative w-16 h-16 mb-6">
-                             <div className="absolute inset-0 border-4 border-neutral-800 rounded-full"></div>
-                             <div className="absolute inset-0 border-4 border-lime-500 rounded-full border-t-transparent animate-spin"></div>
-                         </div>
-                         <h3 className="text-xl font-bold mb-2">Analyzing Geometry & Biometrics</h3>
-                         <p className="text-neutral-500 text-sm">Running YOLOv8-Pose and Trajectory Physics Pipeline...</p>
-                         <p className="text-lime-500/50 text-xs mt-4 animate-pulse">This usually takes several minutes on CPU depending on video length.</p>
-                     </div>
-                 )}
+        {/* Drag overlay */}
+        {isDragging && (
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            zIndex: 50,
+            background: 'rgba(163, 230, 53, 0.05)',
+            border: '2px dashed rgba(163, 230, 53, 0.3)',
+            borderRadius: '24px',
+            margin: '20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backdropFilter: 'blur(4px)',
+          }}>
+            <div style={{
+              fontSize: '24px',
+              fontWeight: 700,
+              color: 'var(--accent)',
+            }}>
+              Drop your video here
             </div>
+          </div>
+        )}
+
+        <div className="landing-content">
+          {/* Badge */}
+          <div className="badge animate-in" style={{ animationDelay: '0.1s' }}>
+            <span className="badge-dot" />
+            CourtSense AI v2
+          </div>
+
+          {/* Hero Title */}
+          <h1 className="hero-title animate-in" style={{ animationDelay: '0.2s' }}>
+            <span className="text-gradient">Witness the Magic</span>
+            <br />
+            <span style={{ color: 'var(--text-primary)' }}>of Every Rally.</span>
+          </h1>
+
+          {/* Subtitle */}
+          <p className="hero-subtitle animate-in-delayed">
+            Upload any tennis match video and watch our AI transform it into a
+            stunning 3D replay with real-time ball tracking, player analytics,
+            and physics visualization.
+          </p>
+
+          {/* Feature Cards */}
+          <div className="features-row animate-in-delayed-2">
+            <div className="feature-card">
+              <div className="feature-card-icon" style={{ background: 'rgba(163, 230, 53, 0.1)', color: 'var(--accent)' }}>
+                <Eye size={20} />
+              </div>
+              <span className="feature-card-label">3D Replay</span>
+            </div>
+            <div className="feature-card">
+              <div className="feature-card-icon" style={{ background: 'rgba(34, 211, 238, 0.1)', color: 'var(--cyan)' }}>
+                <Zap size={20} />
+              </div>
+              <span className="feature-card-label">Ball Physics</span>
+            </div>
+            <div className="feature-card">
+              <div className="feature-card-icon" style={{ background: 'rgba(168, 85, 247, 0.1)', color: '#a855f7' }}>
+                <Target size={20} />
+              </div>
+              <span className="feature-card-label">AI Analytics</span>
+            </div>
+          </div>
+
+          {/* Upload / Status */}
+          {appState === 'idle' && (
+            <div className="animate-in-delayed-3" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <input
+                type="file"
+                accept="video/mp4,video/quicktime,video/webm"
+                className="hidden"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                style={{ display: 'none' }}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="upload-btn"
+              >
+                <Upload size={20} />
+                Select Video to Analyze
+              </button>
+              <button onClick={loadDemo} className="demo-btn">
+                Or load pre-generated demo data →
+              </button>
+            </div>
+          )}
+
+          {appState === 'uploading' && (
+            <div className="status-card animate-scale-in">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <Upload size={20} style={{ color: 'var(--accent)', animation: 'float 1.5s ease-in-out infinite' }} />
+                  <span style={{ fontWeight: 600, fontSize: '16px' }}>Uploading Video...</span>
+                </div>
+                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)', fontSize: '20px', fontWeight: 700 }}>
+                  {uploadProgress}%
+                </span>
+              </div>
+              <div className="progress-bar-container">
+                <div className="progress-bar-fill" style={{ width: `${uploadProgress}%` }} />
+              </div>
+            </div>
+          )}
+
+          {appState === 'processing' && (
+            <div className="status-card animate-scale-in" style={{ textAlign: 'center' }}>
+              <div className="spinner-ring">
+                <div className="spinner-ring-track" />
+                <div className="spinner-ring-fill" />
+              </div>
+              <h3 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '8px' }}>
+                Analyzing Geometry & Biometrics
+              </h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', margin: 0 }}>
+                Running YOLOv8-Pose and Trajectory Physics Pipeline...
+              </p>
+              <p style={{ color: 'rgba(163, 230, 53, 0.4)', fontSize: '12px', marginTop: '16px', animation: 'pulse-glow 2s ease infinite' }}>
+                This usually takes several minutes on CPU.
+              </p>
+            </div>
+          )}
         </div>
-      );
+      </div>
+    );
   }
 
+  /* ============================
+   *   3D VIEWER PAGE
+   * ============================ */
   return (
-    <div className="w-full h-screen bg-neutral-950 text-white overflow-hidden relative font-sans flex flex-col">
-      {/* Header */}
-      <header className="absolute top-0 left-0 right-0 z-10 p-5 flex justify-between items-start">
-        <div className="bg-black/50 backdrop-blur-xl border border-white/10 rounded-2xl px-5 py-3">
-          <h1 className="text-xl font-extrabold tracking-tight text-white leading-none">
-            CourtSense AI
-          </h1>
-          <p className="text-neutral-400 text-[10px] font-semibold tracking-[0.2em] uppercase mt-0.5">3D Tennis Analytics</p>
+    <div className="viewer-page">
+      {/* --- Header --- */}
+      <header className="viewer-header">
+        {/* Brand */}
+        <div className="glass brand-pill">
+          <div className="brand-name">CourtSense AI</div>
+          <div className="brand-sub">3D Tennis Analytics</div>
         </div>
-        
+
         {/* Stats Panel */}
-        <div className="bg-black/50 backdrop-blur-xl border border-white/10 rounded-2xl px-5 py-3 flex gap-5">
-          <div className="flex flex-col items-center">
-            <span className="text-[10px] text-neutral-500 font-bold tracking-[0.15em] uppercase">Speed</span>
-            <span className="text-lg font-bold font-mono text-lime-400 leading-tight">{ballSpeed.toFixed(0)}</span>
-            <span className="text-[9px] text-neutral-600 font-medium">km/h</span>
+        <div className="glass stats-panel">
+          <div className="stat-item">
+            <span className="stat-label">Speed</span>
+            <span className="stat-value" style={{ color: 'var(--accent)' }}>
+              {ballSpeed.toFixed(0)}
+            </span>
+            <span className="stat-unit">km/h</span>
           </div>
-          <div className="w-px bg-white/10"></div>
-          <div className="flex flex-col items-center">
-            <span className="text-[10px] text-neutral-500 font-bold tracking-[0.15em] uppercase">Spin</span>
-            <span className="text-lg font-bold font-mono text-cyan-400 leading-tight">{spinRate.toFixed(0)}</span>
-            <span className="text-[9px] text-neutral-600 font-medium">rpm</span>
+          <div className="stat-divider" />
+          <div className="stat-item">
+            <span className="stat-label">Spin</span>
+            <span className="stat-value" style={{ color: 'var(--cyan)' }}>
+              {spinRate.toFixed(0)}
+            </span>
+            <span className="stat-unit">rpm</span>
+          </div>
+          <div className="stat-divider" />
+          <div className="stat-item">
+            <span className="stat-label">Frame</span>
+            <span className="stat-value" style={{ color: 'var(--text-secondary)', fontSize: '16px' }}>
+              {frame.toString().padStart(4, '0')}
+            </span>
+            <span className="stat-unit">/ {totalFrames}</span>
           </div>
         </div>
       </header>
 
-      {/* 3D Canvas */}
-      <main className="flex-1">
-        <TennisScene ballPos={ballPos} player1Pos={p1Pos} player2Pos={p2Pos} />
+      {/* --- Camera Presets (right side) --- */}
+      <div className="camera-presets">
+        {[
+          { id: 'default' as const, label: 'TV' },
+          { id: 'overhead' as const, label: 'TOP' },
+          { id: 'p1' as const, label: 'P1' },
+          { id: 'p2' as const, label: 'P2' },
+        ].map(cam => (
+          <button
+            key={cam.id}
+            className={`camera-btn ${cameraPreset === cam.id ? 'active' : ''}`}
+            onClick={() => setCameraPreset(cam.id)}
+            title={`Camera: ${cam.label}`}
+          >
+            {cam.label}
+          </button>
+        ))}
+      </div>
+
+      {/* --- 3D Canvas --- */}
+      <main style={{ flex: 1 }}>
+        <TennisScene
+          ballPos={ballPos}
+          player1Pos={p1Pos}
+          player2Pos={p2Pos}
+          ballTrail={ballTrail}
+          cameraPreset={cameraPreset}
+        />
       </main>
 
-      {/* Controls Footer */}
-      <footer className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 w-full max-w-lg px-4 flex flex-col gap-3">
-        {/* New Session Button */}
-        <div className="flex justify-end w-full">
-             <button 
-                 onClick={() => {
-                     setAppState('idle');
-                     setSequenceData([]);
-                 }}
-                 className="bg-neutral-900 hover:bg-neutral-800 border border-white/10 text-xs font-semibold px-4 py-2 rounded-xl transition-colors shadow-lg shadow-black/50 flex items-center gap-2"
-             >
-                 <Upload size={14} />
-                 New Video
-             </button>
+      {/* --- Keyboard Hints --- */}
+      <div className="keyboard-hint">
+        <span className="kbd">Space</span>
+        <span className="hint-text">Play/Pause</span>
+        <span className="kbd">←</span>
+        <span className="kbd">→</span>
+        <span className="hint-text">Frame Step</span>
+        <span className="kbd">R</span>
+        <span className="hint-text">Reset</span>
+      </div>
+
+      {/* --- Footer Controls --- */}
+      <footer className="viewer-footer">
+        {/* Action buttons */}
+        <div className="footer-actions">
+          <button
+            className="action-btn"
+            onClick={() => {
+              setAppState('idle');
+              setSequenceData([]);
+              setIsPlaying(false);
+              trailRef.current = [];
+              setBallTrail([]);
+            }}
+          >
+            <Video size={14} />
+            New Video
+          </button>
         </div>
 
-        <div className="bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl px-5 py-3 shadow-2xl">
-          {/* Progress Bar */}
-          <div className="w-full h-1 bg-white/10 rounded-full mb-3 overflow-hidden cursor-pointer">
-            <div
-              className="h-full bg-gradient-to-r from-lime-500 to-emerald-400 rounded-full transition-all duration-100"
-              style={{ width: `${progress}%` }}
-            />
+        {/* Main controls bar */}
+        <div className="glass-heavy controls-bar">
+          {/* Timeline */}
+          <div className="timeline-container" onClick={handleTimelineClick}>
+            <div className="timeline-fill" style={{ width: `${progress}%` }} />
           </div>
-          
-          {/* Controls Row */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-                <button
-                onClick={resetSimulation}
-                className="text-neutral-500 hover:text-white transition-colors"
-                >
-                <RotateCcw size={18} />
-                </button>
 
-                <button
-                onClick={togglePlay}
-                className="bg-lime-500 hover:bg-lime-400 text-black rounded-full p-3 transition-all duration-200 shadow-[0_0_16px_rgba(132,204,22,0.3)] hover:shadow-[0_0_24px_rgba(132,204,22,0.5)]"
-                >
-                {isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
-                </button>
+          {/* Controls Row */}
+          <div className="controls-row">
+            <div className="controls-left">
+              {/* Reset */}
+              <button className="control-icon-btn" onClick={resetSimulation} title="Reset (R)">
+                <RotateCcw size={16} />
+              </button>
+
+              {/* Step backward */}
+              <button
+                className="control-icon-btn"
+                onClick={() => {
+                  if (sequenceData.length > 0) {
+                    setIsPlaying(false);
+                    const prev = Math.max(frameRef.current - 1, 0);
+                    seekToFrame(prev);
+                  }
+                }}
+                title="Previous frame (←)"
+              >
+                <ChevronLeft size={18} />
+              </button>
+
+              {/* Play/Pause */}
+              <button className="play-btn" onClick={togglePlay} title="Play/Pause (Space)">
+                {isPlaying
+                  ? <Pause size={18} fill="currentColor" />
+                  : <Play size={18} fill="currentColor" />
+                }
+              </button>
+
+              {/* Step forward */}
+              <button
+                className="control-icon-btn"
+                onClick={() => {
+                  if (sequenceData.length > 0) {
+                    setIsPlaying(false);
+                    const next = Math.min(frameRef.current + 1, sequenceData.length - 1);
+                    seekToFrame(next);
+                  }
+                }}
+                title="Next frame (→)"
+              >
+                <ChevronRight size={18} />
+              </button>
             </div>
 
-            <div className="flex items-center gap-4">
-                <span className="text-[10px] text-neutral-500 font-bold tracking-wider uppercase">1×</span>
-                <div className="flex flex-col items-end">
-                <span className="text-xs text-neutral-400 font-mono">
-                    {frame.toString().padStart(4, '0')}
-                    <span className="text-neutral-600"> / {totalFrames}</span>
-                </span>
-                </div>
+            <div className="controls-right">
+              {/* Speed Selector */}
+              <div className="speed-selector">
+                {SPEED_OPTIONS.map(s => (
+                  <button
+                    key={s}
+                    className={`speed-option ${speed === s ? 'active' : ''}`}
+                    onClick={() => setSpeed(s)}
+                  >
+                    {s}×
+                  </button>
+                ))}
+              </div>
+
+              {/* Frame counter */}
+              <span className="frame-counter">
+                {frame.toString().padStart(4, '0')}
+                <span className="frame-counter-dim"> / {totalFrames}</span>
+              </span>
             </div>
           </div>
         </div>
