@@ -362,7 +362,7 @@ function App() {
         {/* Settings Modal */}
         {showSettings && (
           <div className="settings-modal-overlay">
-            <div className="settings-modal blur-md glass-heavy">
+            <div className="settings-modal glass-heavy">
               <button className="settings-close" onClick={() => setShowSettings(false)}>
                 <X size={20} />
               </button>
