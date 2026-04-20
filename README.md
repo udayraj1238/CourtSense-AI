@@ -50,9 +50,27 @@
 
 ---
 
-## 🚀 Quick Start (Local Development)
+## 🚀 Quick Start: Process Your Own Videos
 
-Want to run the full CV pipeline and backend locally to analyze your own videos?
+### Option A: Free Online Processing (No Installation!)
+You can process custom, real-world videos directly on the Live Site for completely free using our automated Google Colab backend.
+
+1. **Deploy your AI Backend:** 
+   - Open the **[CourtSense Colab Backend](https://colab.research.google.com/github/udayraj1238/CourtSense-AI/blob/main/colab_backend.ipynb)** notebook.
+   - In the top menu, click **Runtime > Run all**.
+   - Scroll to the very bottom and wait ~30 seconds for it to install everything. It will print a URL at the end that looks like `https://some-random-words.loca.lt`. **Copy that link.**
+2. **Link the Website:**
+   - Go to the **[Live Demo Site](https://udayraj1238.github.io/CourtSense-AI/)**.
+   - Click the **Settings Gear ⚙️** icon in the top right corner.
+   - Paste your link into the box and click Save.
+3. **Upload & Replay:**
+   - Now click the big "Select Video" upload button on the website and watch the AI analyze your video entirely for free!
+
+---
+
+### Option B: Local Development
+
+Want to run the full CV pipeline and backend locally on your own hardware?
 
 ### 1. Prerequisites
 - Python 3.10+
