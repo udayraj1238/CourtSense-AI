@@ -15,6 +15,8 @@ interface TennisSceneProps {
   player2Pos: [number, number, number];
   ballTrail?: [number, number, number][];
   cameraPreset?: 'default' | 'overhead' | 'p1' | 'p2';
+  p1Hitting?: boolean;
+  p2Hitting?: boolean;
 }
 
 const CAMERA_TARGETS: Record<string, [number, number, number]> = {
@@ -48,6 +50,8 @@ export const TennisScene: React.FC<TennisSceneProps> = React.memo(({
   player2Pos,
   ballTrail = [],
   cameraPreset = 'default',
+  p1Hitting = false,
+  p2Hitting = false,
 }) => {
   const initPos = CAMERA_TARGETS[cameraPreset] ?? CAMERA_TARGETS.default;
 
@@ -121,8 +125,8 @@ export const TennisScene: React.FC<TennisSceneProps> = React.memo(({
         <Ball position={ballPos} />
 
         {/* Players */}
-        <Player position={player1Pos} color="#4f9aff" accentColor="#1e3a6e" side="bottom" label="Player 1" />
-        <Player position={player2Pos} color="#ff5a6e" accentColor="#7f1d2e" side="top" label="Player 2" />
+        <Player position={player1Pos} color="#4f9aff" accentColor="#1e3a6e" side="bottom" label="Player 1" isHitting={p1Hitting} />
+        <Player position={player2Pos} color="#ff5a6e" accentColor="#7f1d2e" side="top"    label="Player 2" isHitting={p2Hitting} />
 
         {/* Post-processing */}
         <Effects />

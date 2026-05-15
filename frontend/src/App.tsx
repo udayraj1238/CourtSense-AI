@@ -20,6 +20,7 @@ interface FrameData {
   players: PlayerState[];
   ball_speed_kmh?: number;
   spin_rate_rpm?: number;
+  hitter?: 'p1' | 'p2' | null;
 }
 interface SequenceResponse { sequence: FrameData[]; }
 
@@ -84,6 +85,9 @@ function App() {
   const [spinRate, setSpinRate] = useState(0);
   const [ballTrail, setBallTrail] = useState<[number, number, number][]>([]);
   const [heatmapData, setHeatmapData] = useState<[number, number][]>([]);
+  const [p1Hitting, setP1Hitting] = useState(false);
+  const [p2Hitting, setP2Hitting] = useState(false);
+  const hittingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const frameRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -239,6 +243,13 @@ function App() {
     if (newP2) setP2Pos(newP2);
     if (fd.ball_speed_kmh !== undefined) setBallSpeed(fd.ball_speed_kmh);
     if (fd.spin_rate_rpm !== undefined) setSpinRate(fd.spin_rate_rpm);
+    // Hitting flash: brief true pulse when hitter is set
+    if (fd.hitter) {
+      if (hittingTimerRef.current) clearTimeout(hittingTimerRef.current);
+      if (fd.hitter === 'p1') { setP1Hitting(true); setP2Hitting(false); }
+      else { setP2Hitting(true); setP1Hitting(false); }
+      hittingTimerRef.current = setTimeout(() => { setP1Hitting(false); setP2Hitting(false); }, 250);
+    }
   }, []);
 
   /* --- Animation Loop --- */
@@ -655,6 +666,8 @@ function App() {
           player2Pos={p2Pos}
           ballTrail={ballTrail}
           cameraPreset={cameraPreset}
+          p1Hitting={p1Hitting}
+          p2Hitting={p2Hitting}
         />
       </main>
 
