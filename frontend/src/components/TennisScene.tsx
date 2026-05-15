@@ -1,12 +1,13 @@
-import React, { Suspense, useEffect } from 'react';
-import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls, Stars } from '@react-three/drei';
+import React, { Suspense, useRef, useEffect } from 'react';
+import { Canvas, useThree, useFrame } from '@react-three/fiber';
+import { OrbitControls, Stars, ContactShadows } from '@react-three/drei';
 import { Court } from './Court';
 import { Stadium } from './Stadium';
 import { Ball } from './Ball';
 import { BallTrail } from './BallTrail';
 import { Player } from './Player';
 import { Effects } from './Effects';
+import * as THREE from 'three';
 
 interface TennisSceneProps {
   ballPos: [number, number, number];
@@ -16,27 +17,27 @@ interface TennisSceneProps {
   cameraPreset?: 'default' | 'overhead' | 'p1' | 'p2';
 }
 
-/** Smooth camera controller that snaps to preset positions */
+const CAMERA_TARGETS: Record<string, [number, number, number]> = {
+  default:  [0, 14, 22],
+  overhead: [0, 32, 0.1],
+  p1:       [0, 5, 20],
+  p2:       [0, 5, -20],
+};
+
+/** Smooth camera lerp between presets */
 function CameraController({ preset }: { preset: string }) {
   const { camera } = useThree();
+  const targetPos = useRef(new THREE.Vector3(...CAMERA_TARGETS[preset] ?? CAMERA_TARGETS.default));
 
   useEffect(() => {
-    switch (preset) {
-      case 'overhead':
-        camera.position.set(0, 30, 0.1);
-        break;
-      case 'p1':
-        camera.position.set(0, 4, 18);
-        break;
-      case 'p2':
-        camera.position.set(0, 4, -18);
-        break;
-      default:
-        camera.position.set(0, 14, 22);
-        break;
-    }
+    const t = CAMERA_TARGETS[preset] ?? CAMERA_TARGETS.default;
+    targetPos.current.set(...t);
+  }, [preset]);
+
+  useFrame((_state, delta) => {
+    camera.position.lerp(targetPos.current, Math.min(delta * 3.5, 1));
     camera.lookAt(0, 0, 0);
-  }, [preset, camera]);
+  });
 
   return null;
 }
@@ -48,20 +49,12 @@ export const TennisScene: React.FC<TennisSceneProps> = React.memo(({
   ballTrail = [],
   cameraPreset = 'default',
 }) => {
-  // Get initial camera position based on preset
-  const getCameraPos = (): [number, number, number] => {
-    switch (cameraPreset) {
-      case 'overhead': return [0, 30, 0.1];
-      case 'p1': return [0, 4, 18];
-      case 'p2': return [0, 4, -18];
-      default: return [0, 14, 22];
-    }
-  };
+  const initPos = CAMERA_TARGETS[cameraPreset] ?? CAMERA_TARGETS.default;
 
   return (
     <Canvas
       shadows
-      camera={{ position: getCameraPos(), fov: 38 }}
+      camera={{ position: initPos, fov: 36 }}
       gl={{
         antialias: true,
         alpha: false,
@@ -69,106 +62,87 @@ export const TennisScene: React.FC<TennisSceneProps> = React.memo(({
         stencil: false,
         depth: true,
       }}
-      dpr={[1, 1.5]} // Cap pixel ratio for performance
-      performance={{ min: 0.5 }} // Adaptive performance
+      dpr={[1, 1.5]}
+      performance={{ min: 0.5 }}
     >
-      <color attach="background" args={['#060a06']} />
-      <fog attach="fog" args={['#0a140a', 35, 65]} />
+      <color attach="background" args={['#040804']} />
+      <fog attach="fog" args={['#0a1a08', 32, 68]} />
 
       <Suspense fallback={null}>
         {/* === Lighting Rig === */}
-        {/* Ambient fill */}
-        <ambientLight intensity={0.3} color="#e0ddd0" />
-        
-        {/* Main Key Light (sun/stadium primary) */}
+        <ambientLight intensity={0.28} color="#d8f0d0" />
+
+        {/* Main key light */}
         <directionalLight
-          position={[12, 28, 10]}
-          intensity={2.2}
+          position={[12, 30, 12]}
+          intensity={2.4}
           castShadow
           shadow-mapSize-width={2048}
           shadow-mapSize-height={2048}
-          shadow-camera-far={70}
-          shadow-camera-left={-25}
-          shadow-camera-right={25}
-          shadow-camera-top={25}
-          shadow-camera-bottom={-25}
+          shadow-camera-far={75}
+          shadow-camera-left={-26}
+          shadow-camera-right={26}
+          shadow-camera-top={26}
+          shadow-camera-bottom={-26}
           shadow-bias={-0.0003}
-          color="#fff8e0"
-        />
-        
-        {/* Fill light (cooler, from opposite side) */}
-        <directionalLight
-          position={[-10, 18, -8]}
-          intensity={0.5}
-          color="#b0c8ff"
-        />
-        
-        {/* Rim / back light */}
-        <directionalLight
-          position={[0, 10, -20]}
-          intensity={0.3}
-          color="#ffd0a0"
+          color="#fff5e0"
         />
 
-        {/* Court center spot */}
-        <pointLight position={[0, 15, 0]} intensity={0.5} color="#ffe8c0" distance={45} decay={2} />
+        {/* Cool fill from opposite side */}
+        <directionalLight position={[-10, 20, -10]} intensity={0.55} color="#a0c4ff" />
 
-        {/* Stars (night sky vibe) */}
-        <Stars
-          radius={80}
-          depth={60}
-          count={1500}
-          factor={3}
-          saturation={0.1}
-          fade
-          speed={0.3}
-        />
+        {/* Warm rim / back */}
+        <directionalLight position={[0, 8, -22]} intensity={0.35} color="#ffc870" />
+
+        {/* Court center warm spot */}
+        <pointLight position={[0, 16, 0]} intensity={0.6} color="#ffe4b0" distance={48} decay={2} />
+
+        {/* Stars */}
+        <Stars radius={90} depth={70} count={2000} factor={3.5} saturation={0.15} fade speed={0.2} />
 
         {/* === 3D Elements === */}
         <Court />
         <Stadium />
 
+        {/* Contact shadows under players */}
+        <ContactShadows
+          position={[0, 0.01, 0]}
+          opacity={0.55}
+          scale={40}
+          blur={2.5}
+          far={1.5}
+          color="#000000"
+        />
+
         {/* Ball Trail */}
-        {ballTrail.length > 0 && <BallTrail positions={ballTrail} />}
+        {ballTrail.length > 1 && <BallTrail positions={ballTrail} />}
 
         {/* Ball */}
         <Ball position={ballPos} />
 
         {/* Players */}
-        <Player
-          position={player1Pos}
-          color="#3b82f6"
-          accentColor="#1e3a5f"
-          side="bottom"
-          label="Player 1"
-        />
-        <Player
-          position={player2Pos}
-          color="#ef4444"
-          accentColor="#7f1d1d"
-          side="top"
-          label="Player 2"
-        />
+        <Player position={player1Pos} color="#4f9aff" accentColor="#1e3a6e" side="bottom" label="Player 1" />
+        <Player position={player2Pos} color="#ff5a6e" accentColor="#7f1d2e" side="top" label="Player 2" />
 
         {/* Post-processing */}
         <Effects />
 
-        {/* Camera Controller */}
+        {/* Smooth camera */}
         <CameraController preset={cameraPreset} />
 
-        {/* Camera Controls */}
+        {/* Orbit controls */}
         <OrbitControls
           enablePan={true}
           enableZoom={true}
           enableRotate={true}
-          maxPolarAngle={Math.PI / 2 - 0.05}
+          maxPolarAngle={Math.PI / 2 - 0.04}
           minDistance={5}
-          maxDistance={50}
+          maxDistance={55}
           target={[0, 0, 0]}
           enableDamping={true}
-          dampingFactor={0.08}
-          rotateSpeed={0.6}
-          zoomSpeed={0.8}
+          dampingFactor={0.07}
+          rotateSpeed={0.55}
+          zoomSpeed={0.75}
         />
       </Suspense>
     </Canvas>

@@ -13,28 +13,31 @@
 
   <p>
     <img src="https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python" alt="Python" />
-    <img src="https://img.shields.io/badge/React-18-61dafb?style=flat-square&logo=react&logoColor=black" alt="React" />
+    <img src="https://img.shields.io/badge/React-19-61dafb?style=flat-square&logo=react&logoColor=black" alt="React" />
     <img src="https://img.shields.io/badge/Three.js-3D-black?style=flat-square&logo=three.js" alt="Three.js" />
     <img src="https://img.shields.io/badge/YOLOv8-Pose-ff0000?style=flat-square" alt="YOLOv8" />
+    <img src="https://img.shields.io/badge/FastAPI-Backend-009688?style=flat-square&logo=fastapi" alt="FastAPI" />
   </p>
 </div>
 
 ---
 
-**CourtSense AI** processes standard tennis match videos using computer vision and transforms them into stunning, interactive 3D visualizations. Witness every rally, track player movement, and analyze ball physics in real-time.
+**CourtSense AI** processes standard tennis match videos using computer vision and transforms them into a stunning, interactive 3D visualization. Watch every rally in real-time, track player movement, and analyze ball physics — all in your browser.
 
-✨ **[Experience the Live 3D Viewer Here](https://udayraj1238.github.io/CourtSense-AI/)** ✨
+✨ **[Experience the Live Demo Here](https://udayraj1238.github.io/CourtSense-AI/)** ✨ — no installation required.
 
 ---
 
 ## 🌟 Key Features
 
-- 🏟️ **Cinematic 3D Court** — Immersive real-time tennis stadium with lighting, dynamic shadows, and post-processing (Bloom/Vignette) rendered using `react-three-fiber`.
-- 🏃 **Player Tracking & Ghosting** — Real-world player detection using YOLOv8-Pose, mapped to 3D space via homography projection.
-- 🎾 **Physics-Based Ball Trajectory** — Smooth, lag-free ball tracking with Kalman filters, Magnus effect correction, and a dynamic "comet tail" visualizer.
-- 📊 **Live Analytics Dashboard** — Real-time display of ball speed (km/h), spin rate (rpm), and frame-accurate playback.
-- 🎥 **Interactive Playback** — Glassmorphic UI with timeline scrubbing, variable playback speed (0.25x - 2x), and smart camera presets (TV, Top-down, Player POV).
-- 🧠 **AI Court Segmentation** — SegFormer-based court surface detection and automatic camera calibration.
+- 🏟️ **Cinematic 3D Court** — Immersive stadium with dynamic lighting, `ContactShadows`, post-processing (Bloom, Chromatic Aberration, Vignette) via `react-three-fiber`.
+- 🎾 **Physics-Based Ball Trail** — Real-time comet trail using pre-allocated GPU buffer geometry (zero GC pressure), speed-reactive emissive color (yellow → orange), and dynamic point light.
+- 🏃 **Player Tracking** — YOLOv8-Pose detection mapped to 3D via homography. Players have idle breathing animation and anticipation movement toward incoming shots.
+- 📊 **Live Analytics HUD** — Right-side panel with radial speed gauge (0–250 km/h), spin rate ring, and progress tracker. Real-time ball speed 120–200 km/h on drives.
+- 🗺️ **Ball Heatmap** — Toggle a top-down 2D court overlay showing ball position density (press `H`).
+- 🎥 **Interactive Playback** — Glassmorphic controls with timeline scrubbing (drag), variable speed (0.25x–2x), and 4 camera presets (TV, Top-down, P1-POV, P2-POV) with smooth lerp transitions.
+- 🔔 **Smart Notifications** — Non-blocking toast system replacing all browser `alert()` dialogs.
+- 🔌 **Backend Status Indicator** — Real-time green/red backend connectivity badge. Upload button runs a health check before opening the file picker.
 
 ---
 
@@ -42,78 +45,54 @@
 
 | Layer | Technology |
 |---|---|
-| **🎨 Frontend** | React, Three.js (`react-three-fiber`), TailwindCSS, Vanilla CSS Design System |
-| **⚙️ Backend** | FastAPI, Uvicorn, Python |
+| **🎨 Frontend** | React 19, Three.js (`react-three-fiber`), `@react-three/drei`, `@react-three/postprocessing`, TailwindCSS v4, Custom CSS Design System |
+| **⚙️ Backend** | FastAPI, Uvicorn, Python 3.10+ |
 | **👁️ Computer Vision** | YOLOv8-Pose (Ultralytics), OpenCV, NumPy |
-| **🧮 Physics & Math** | Kalman Filters, Magnus Effect Modeling, EMA Smoothing |
-| **🤖 Machine Learning** | SegFormer (HuggingFace) |
+| **🧮 Physics** | Kalman Filters, Magnus Effect Modeling, Parabolic Arc Simulation |
+| **☁️ Deployment** | GitHub Pages (Frontend) + Hugging Face Spaces (Backend) |
 
 ---
 
-## 🚀 Quick Start: Process Your Own Videos
+## 🚀 Quick Start
 
-### Option A: Free Online Processing (No Installation!)
-You can process custom, real-world videos directly on the Live Site for completely free using our automated Google Colab backend.
+### Option A — Free Demo (No Setup Required)
 
-1. **Deploy your AI Backend:** 
-   - Open the **[CourtSense Colab Backend](https://colab.research.google.com/github/udayraj1238/CourtSense-AI/blob/main/colab_backend.ipynb)** notebook.
-   - In the top menu, click **Runtime > Run all**.
-   - Scroll to the very bottom and wait ~30 seconds for it to install everything. It will print a URL at the end that looks like `https://some-random-words.loca.lt`. **Copy that link.**
-2. **Link the Website:**
-   - Go to the **[Live Demo Site](https://udayraj1238.github.io/CourtSense-AI/)**.
-   - Click the **Settings Gear ⚙️** icon in the top right corner.
-   - Paste your link into the box and click Save.
-3. **Upload & Replay:**
-   - Now click the big "Select Video" upload button on the website and watch the AI analyze your video entirely for free!
+1. Open **[udayraj1238.github.io/CourtSense-AI](https://udayraj1238.github.io/CourtSense-AI/)**
+2. Click **"Or load pre-generated demo →"**
+3. The demo auto-plays a cinematic 18-shot rally with real physics
 
----
+### Option B — Upload Your Own Video
 
-### Option B: Local Development
+Custom video processing requires the AI backend. You have two options:
 
-Want to run the full CV pipeline and backend locally on your own hardware?
+#### 🌐 Via Google Colab (Free, Recommended)
 
-### 1. Prerequisites
-- Python 3.10+
-- Node.js 18+
+1. Open the **[CourtSense Colab Backend](https://colab.research.google.com/github/udayraj1238/CourtSense-AI/blob/main/colab_backend.ipynb)**
+2. Click **Runtime → Run all** — wait ~30 seconds
+3. Copy the `loca.lt` tunnel URL printed at the bottom
+4. On the site, click **⚙️ Settings** → paste the URL → **Save & Connect**
+5. The badge turns **green** → now upload any tennis match video!
 
-### 2. Setup
+#### 🖥️ Via Local Backend
 
 ```bash
-# Clone the repository
 git clone https://github.com/udayraj1238/CourtSense-AI.git
 cd CourtSense-AI
 
-# Setup Python environment
+# Backend
 python -m venv .venv
-source .venv/bin/activate  # Mac/Linux
-# .venv\Scripts\activate   # Windows
-
-# Install backend dependencies
+.venv\Scripts\activate       # Windows
+# source .venv/bin/activate  # Mac/Linux
 pip install -r requirements.txt
+cd backend
+uvicorn main:app --host 0.0.0.0 --port 8000
 
-# Setup frontend
+# Frontend (new terminal)
 cd frontend
 npm install
-cd ..
-```
-
-### 3. Run the App
-
-Open two terminals:
-
-**Terminal 1 — Backend (API & Video Processing)**
-```bash
-cd backend
-python -m uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-**Terminal 2 — Frontend (3D UI)**
-```bash
-cd frontend
 npm run dev
+# Open http://localhost:5173/CourtSense-AI/
 ```
-
-Point your browser to `http://localhost:5173` to upload videos or load demo data!
 
 ---
 
@@ -121,26 +100,65 @@ Point your browser to `http://localhost:5173` to upload videos or load demo data
 
 ```text
 CourtSense-AI/
-├── backend/                # FastAPI server (Video Upload & Processing)
-│   ├── main.py
-│   └── models.py
-├── frontend/               # React + Three.js Application
-│   ├── src/
-│   │   ├── components/     # TennisScene, Court, Ball, Player, Stadium, Effects
-│   │   ├── App.tsx         # Main UI, Glassmorphic Controls, Routing
-│   │   └── index.css       # Custom Design System Tokens & Animations
-├── courtsense_ai/          # Core Python ML Pipeline
-│   ├── core/               # Segmentation, Homography, Tracking, Physics
-│   └── utils/              # Visualization helpers
-├── scripts/                # Standalone Video Processing Scripts
-└── data/                   # Generated JSON tracking data files
+├── backend/                   # FastAPI server (upload + CV processing)
+│   ├── main.py                # /health, /upload, /tracking endpoints
+│   └── models.py              # Pydantic schemas
+├── frontend/                  # React + Three.js application
+│   ├── public/
+│   │   └── demo_data.json     # Pre-generated 18-shot rally (loads without backend)
+│   └── src/
+│       ├── components/
+│       │   ├── TennisScene.tsx    # Canvas, lighting, camera lerp, ContactShadows
+│       │   ├── Ball.tsx           # Dynamic light, speed-reactive emissive, zero-alloc useFrame
+│       │   ├── BallTrail.tsx      # Pre-allocated DynamicDrawUsage BufferGeometry
+│       │   ├── Player.tsx         # YOLOv8 player model + breathing animation
+│       │   ├── Court.tsx          # Emissive court lines, reflective ground
+│       │   ├── Stadium.tsx        # Stadium environment
+│       │   ├── Effects.tsx        # Bloom, ChromaticAberration, Vignette, ToneMapping
+│       │   ├── AnalyticsSidebar.tsx  # Speed gauge + spin ring HUD
+│       │   ├── HeatmapOverlay.tsx    # Canvas-based 2D ball heatmap
+│       │   └── Toast.tsx            # Non-blocking notification system
+│       ├── App.tsx             # Main UI, state, animation loop
+│       └── index.css           # Design system tokens, keyframes, glassmorphism utilities
+├── courtsense_ai/             # Core Python ML pipeline
+│   ├── core/                  # Segmentation, Homography, Tracking, Physics
+│   └── utils/                 # Visualization helpers
+├── scripts/
+│   └── generate_rally.py      # Generates cinematic demo data (writes public/demo_data.json)
+├── data/                      # Generated JSON tracking data
+├── Dockerfile                 # HuggingFace Spaces backend container
+└── .github/workflows/
+    ├── deploy.yml             # GitHub Pages frontend deploy (triggers on push to main)
+    └── huggingface.yml        # HF Spaces backend sync (triggers on push to main)
 ```
+
+---
+
+## ⌨️ Keyboard Shortcuts (Viewer)
+
+| Key | Action |
+|---|---|
+| `Space` | Play / Pause |
+| `←` / `→` | Step one frame |
+| `R` | Reset to frame 0 |
+| `H` | Toggle ball heatmap |
+
+---
+
+## 🔌 API Reference
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | GET | Backend connectivity check |
+| `/api/v1/tracking/upload` | POST | Upload video → returns tracking sequence |
+| `/api/v1/tracking/real` | GET | Load pre-processed match data from `data/real_match_data.json` |
+| `/api/v1/tracking/sequence` | GET | Synthetic mock sequence (no video needed) |
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License.
+MIT License — see [LICENSE](LICENSE) for details.
 
 <div align="center">
   <i>Built to push the boundaries of sports tech.</i>

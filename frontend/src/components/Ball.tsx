@@ -9,14 +9,17 @@ interface BallProps {
 export const Ball: React.FC<BallProps> = React.memo(({ position }) => {
   const ballRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
-  const prevPos = useRef(new THREE.Vector3(...position));
+  const lightRef = useRef<THREE.PointLight>(null);
+
+  // Reusable vectors — never allocate inside useFrame
+  const targetVec = useRef(new THREE.Vector3());
   const speedRef = useRef(0);
 
   const ballMat = useMemo(() => new THREE.MeshStandardMaterial({
     color: '#c8e600',
     emissive: '#7a9900',
-    emissiveIntensity: 0.6,
-    roughness: 0.35,
+    emissiveIntensity: 0.7,
+    roughness: 0.3,
     metalness: 0.05,
   }), []);
 
@@ -28,53 +31,62 @@ export const Ball: React.FC<BallProps> = React.memo(({ position }) => {
   }), []);
 
   useFrame((_state, delta) => {
-    if (ballRef.current) {
-      const target = new THREE.Vector3(...position);
-      
-      // Calculate speed for glow intensity
-      const dist = prevPos.current.distanceTo(target);
-      speedRef.current = THREE.MathUtils.lerp(speedRef.current, dist / Math.max(delta, 0.001), 0.1);
-      prevPos.current.copy(ballRef.current.position);
+    const ball = ballRef.current;
+    if (!ball) return;
 
-      // Smooth interpolation — faster lerp for responsiveness, no jitter
-      const lerpFactor = Math.min(delta * 15, 1);
-      ballRef.current.position.lerp(target, lerpFactor);
+    // No allocations — reuse targetVec
+    targetVec.current.set(position[0], position[1], position[2]);
 
-      // Dynamic glow based on speed
-      if (glowRef.current) {
-        const glowScale = 1.4 + Math.min(speedRef.current * 0.02, 1.2);
-        glowRef.current.position.copy(ballRef.current.position);
-        glowRef.current.scale.setScalar(glowScale);
-        (glowRef.current.material as THREE.MeshBasicMaterial).opacity = 
-          0.08 + Math.min(speedRef.current * 0.005, 0.25);
-      }
+    const dist = ball.position.distanceTo(targetVec.current);
+    speedRef.current = speedRef.current * 0.88 + (dist / Math.max(delta, 0.001)) * 0.12;
 
-      // Update emissive intensity based on speed
-      ballMat.emissiveIntensity = 0.6 + Math.min(speedRef.current * 0.03, 1.5);
+    // Lerp toward target — fast enough to track data, smooth enough to not pop
+    const lerpFactor = Math.min(delta * 18, 1);
+    ball.position.lerp(targetVec.current, lerpFactor);
+
+    // Visual spin proportional to speed
+    const spd = speedRef.current;
+    ball.rotation.x += delta * clampSpin(spd * 0.3);
+    ball.rotation.z += delta * clampSpin(spd * 0.15);
+
+    const speedNorm = Math.min(spd * 0.015, 1);
+
+    if (glowRef.current) {
+      const gs = 1.4 + speedNorm * 1.6;
+      glowRef.current.position.copy(ball.position);
+      glowRef.current.scale.setScalar(gs);
+      (glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.05 + speedNorm * 0.25;
+    }
+
+    // Emissive shifts yellow → orange at high speed
+    ballMat.emissiveIntensity = 0.6 + speedNorm * 2.0;
+    ballMat.emissive.setRGB(0.45 + speedNorm * 0.55, 0.60 - speedNorm * 0.45, 0.0);
+
+    if (lightRef.current) {
+      lightRef.current.position.copy(ball.position);
+      lightRef.current.intensity = 0.3 + speedNorm * 1.4;
     }
   });
 
   return (
     <group>
-      {/* Glow aura */}
+      <pointLight ref={lightRef} color="#ffe060" distance={9} decay={2} />
+
       <mesh ref={glowRef} position={position}>
-        <sphereGeometry args={[0.07, 16, 16]} />
+        <sphereGeometry args={[0.07, 10, 10]} />
         <primitive object={glowMat} attach="material" />
       </mesh>
 
-      {/* Tennis ball */}
       <mesh ref={ballRef} position={position} castShadow>
-        <sphereGeometry args={[0.07, 20, 20]} />
+        <sphereGeometry args={[0.065, 20, 20]} />
         <primitive object={ballMat} attach="material" />
-      </mesh>
-
-      {/* Ball shadow on ground */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[position[0], 0.005, position[2]]}>
-        <circleGeometry args={[0.08, 16]} />
-        <meshBasicMaterial color="#000000" transparent opacity={0.2} />
       </mesh>
     </group>
   );
 });
 
 Ball.displayName = 'Ball';
+
+function clampSpin(v: number) {
+  return Math.min(Math.max(v, 0), 12);
+}

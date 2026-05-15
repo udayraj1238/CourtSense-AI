@@ -19,6 +19,7 @@ export const Player: React.FC<PlayerProps> = React.memo(({
   label,
 }) => {
   const groupRef = useRef<THREE.Group>(null);
+  const targetVec = useRef(new THREE.Vector3());
 
   // Create materials once
   const shirtMat = useMemo(() => new THREE.MeshStandardMaterial({
@@ -67,12 +68,18 @@ export const Player: React.FC<PlayerProps> = React.memo(({
     roughness: 0.2,
   }), []);
 
-  useFrame((_state, delta) => {
+  const torsoRef = useRef<THREE.Group>(null);
+
+  useFrame((state, delta) => {
     if (groupRef.current) {
-      const target = new THREE.Vector3(position[0], 0, position[2]);
-      // Smooth, lag-free lerp
-      const lerpFactor = Math.min(delta * 8, 1);
-      groupRef.current.position.lerp(target, lerpFactor);
+      targetVec.current.set(position[0], 0, position[2]);
+      const lerpFactor = Math.min(delta * 9, 1);
+      groupRef.current.position.lerp(targetVec.current, lerpFactor);
+    }
+    // Idle breathing animation
+    if (torsoRef.current) {
+      torsoRef.current.position.y = Math.sin(state.clock.elapsedTime * 1.4) * 0.008;
+      torsoRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 0.9) * 0.012;
     }
   });
 
@@ -84,33 +91,34 @@ export const Player: React.FC<PlayerProps> = React.memo(({
       {/* Floating label */}
       {label && (
         <Html
-          position={[0, 2.0, 0]}
+          position={[0, 2.1, 0]}
           center
           distanceFactor={15}
-          style={{
-            pointerEvents: 'none',
-            userSelect: 'none',
-          }}
+          style={{ pointerEvents: 'none', userSelect: 'none' }}
         >
           <div style={{
-            background: 'rgba(0,0,0,0.6)',
-            backdropFilter: 'blur(8px)',
+            background: 'rgba(4, 8, 4, 0.75)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)',
             color: color,
-            padding: '3px 10px',
-            borderRadius: '8px',
-            fontSize: '11px',
-            fontWeight: 700,
+            padding: '4px 12px',
+            borderRadius: '10px',
+            fontSize: '10px',
+            fontWeight: 800,
             fontFamily: "'Inter', sans-serif",
-            letterSpacing: '0.05em',
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
             whiteSpace: 'nowrap',
-            border: `1px solid ${color}33`,
+            border: `1px solid ${color}44`,
+            boxShadow: `0 0 12px ${color}22`,
           }}>
             {label}
           </div>
         </Html>
       )}
 
-      {/* Rotate entire body to face the correct direction */}
+      {/* Animated torso group + body rotation */}
+      <group ref={torsoRef}>
       <group rotation={[0, facingRotation, 0]}>
 
         {/* Shadow disc */}
@@ -208,6 +216,7 @@ export const Player: React.FC<PlayerProps> = React.memo(({
         </mesh>
 
       </group>
+      </group>{/* end torsoRef */}
 
       {/* Color ring indicator (outside rotation group so it stays flat) */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>

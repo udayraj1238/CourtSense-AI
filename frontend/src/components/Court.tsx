@@ -14,14 +14,14 @@ export const Court: React.FC = React.memo(() => {
   // Reuse materials via useMemo
   const lineMat = useMemo(() => new THREE.MeshStandardMaterial({
     color: '#ffffff',
-    emissive: '#ffffff',
-    emissiveIntensity: 0.25,
-    roughness: 0.4,
+    emissive: '#a0e8a0',
+    emissiveIntensity: 0.55,
+    roughness: 0.25,
   }), []);
 
   const courtSurfaceMat = useMemo(() => new THREE.MeshStandardMaterial({
-    color: '#1a6b3c',
-    roughness: 0.7,
+    color: '#186638',
+    roughness: 0.72,
     metalness: 0.0,
   }), []);
 
@@ -58,14 +58,14 @@ export const Court: React.FC = React.memo(() => {
 
   return (
     <group>
-      {/* Ground plane — very large dark floor for environment */}
+      {/* Ground plane — very large dark floor, slightly reflective */}
       <Plane
         args={[200, 200]}
         rotation={[-Math.PI / 2, 0, 0]}
         position={[0, -0.06, 0]}
         receiveShadow
       >
-        <meshStandardMaterial color="#080e08" roughness={1} />
+        <meshStandardMaterial color="#060c06" roughness={0.85} metalness={0.15} />
       </Plane>
 
       {/* Outer surround — dark green */}
