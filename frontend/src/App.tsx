@@ -3,11 +3,11 @@ import { TennisScene } from './components/TennisScene';
 import { ToastContainer, useToast } from './components/Toast';
 import { AnalyticsSidebar } from './components/AnalyticsSidebar';
 import { HeatmapOverlay } from './components/HeatmapOverlay';
+import { processVideoFile } from './utils/videoProcessor';
 import {
   Play, Pause, RotateCcw, Upload, Zap, Eye, Target,
-  ChevronLeft, ChevronRight, Video, Settings, X, Map,
+  ChevronLeft, ChevronRight, Video, Map,
 } from 'lucide-react';
-import axios from 'axios';
 import './index.css';
 import './App.css';
 
@@ -28,10 +28,10 @@ const TRAIL_LENGTH = 24;
 const SPEED_OPTIONS = [0.25, 0.5, 1, 2];
 
 const PROCESSING_STEPS = [
-  'Uploading video',
-  'Extracting frames',
-  'Running YOLOv8 detection',
-  'Computing trajectories',
+  'Loading video',
+  'Detecting court',
+  'Tracking ball',
+  'Tracking players',
   'Building 3D replay',
 ];
 
@@ -89,6 +89,10 @@ function App() {
   const [p2Hitting, setP2Hitting] = useState(false);
   const hittingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Client-side processing progress
+  const [processingLabel, setProcessingLabel] = useState('');
+  const [processingPct, setProcessingPct] = useState(0);
+
   const frameRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const trailRef = useRef<[number, number, number][]>([]);
@@ -99,114 +103,63 @@ function App() {
 
   const { toasts, addToast, dismiss } = useToast();
 
-  /* --- Backend health probe --- */
-  const checkBackendHealth = useCallback(async (url: string) => {
-    setBackendStatus('unknown');
-    try {
-      await axios.get(`${url}/health`, {
-        timeout: 4000,
-        headers: { 'Bypass-Tunnel-Reminder': 'true' },
-      });
-      setBackendStatus('online');
-      return true;
-    } catch {
-      setBackendStatus('offline');
-      return false;
-    }
-  }, []);
-
-  // Probe on mount and whenever backendUrl changes
-  useEffect(() => {
-    checkBackendHealth(backendUrl);
-  }, [backendUrl, checkBackendHealth]);
-
-  /* --- Simulated step advancement during processing --- */
-  useEffect(() => {
-    if (appState !== 'processing') { setProcessingStep(0); return; }
-    setProcessingStep(0);
-    const intervals = PROCESSING_STEPS.map((_, i) =>
-      setTimeout(() => setProcessingStep(i + 1), i * 900)
-    );
-    return () => intervals.forEach(clearTimeout);
-  }, [appState]);
-
-  /* --- Data Loading --- */
-  // Demo always loads the static JSON — no backend needed
+  /* --- Demo loads static JSON — no backend needed --- */
   const loadDemo = useCallback(() => {
     setAppState('processing');
+    setProcessingLabel('Loading demo data…');
+    setProcessingPct(10);
     fetch(`${import.meta.env.BASE_URL}demo_data.json`)
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: SequenceResponse) => {
         setSequenceData(data.sequence);
-        heatRef.current = [];
-        trailRef.current = [];
-        frameRef.current = 0;
-        setFrame(0);
-        setBallTrail([]);
-        setHeatmapData([]);
+        heatRef.current = []; trailRef.current = [];
+        frameRef.current = 0; setFrame(0);
+        setBallTrail([]); setHeatmapData([]);
         if (data.sequence.length > 0) updatePositions(data.sequence[0]);
-        setAppState('ready');
-        setIsPlaying(true); // auto-play
+        setAppState('ready'); setIsPlaying(true);
         addToast(`Demo loaded — ${data.sequence.length} frames!`, 'success');
       })
       .catch(err => {
-        console.error('Demo load failed:', err);
         setAppState('idle');
-        addToast('Could not load demo_data.json. Check the public/ folder.', 'error', 6000);
+        addToast('Could not load demo_data.json.', 'error', 5000);
+        console.error(err);
       });
   }, [updatePositions, addToast]);
-
-  /* Pre-flight check then open file picker */
-  const handleUploadClick = async () => {
-    const isOnline = await checkBackendHealth(backendUrl);
-    if (!isOnline) {
-      setShowBackendHelp(true);
-      return;
-    }
-    fileInputRef.current?.click();
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     const file = e.target.files[0];
     if (!file.type.startsWith('video/')) {
       addToast('Please select a valid video file (mp4, mov, webm).', 'warning');
       return;
     }
-    setAppState('uploading');
-    setUploadProgress(0);
-    const formData = new FormData();
-    formData.append('file', file);
+    setAppState('processing');
+    setProcessingLabel('Loading video…');
+    setProcessingPct(0);
+    heatRef.current = [];
+    trailRef.current = [];
+    frameRef.current = 0;
+    setFrame(0);
+    setBallTrail([]);
+    setHeatmapData([]);
     try {
-      const res = await axios.post<SequenceResponse>(`${backendUrl}/api/v1/tracking/upload`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data', 'Bypass-Tunnel-Reminder': 'true' },
-        timeout: 0, // no timeout — video processing can take minutes
-        onUploadProgress: (evt) => {
-          const pct = Math.round((evt.loaded * 100) / (evt.total || 1));
-          setUploadProgress(pct);
-          if (pct === 100) setAppState('processing');
-        },
+      const result = await processVideoFile(file, (step, pct) => {
+        setProcessingLabel(step);
+        setProcessingPct(pct);
+        // Advance processing step indicator based on pct
+        const stepIdx = Math.min(Math.floor(pct / 20), PROCESSING_STEPS.length - 1);
+        setProcessingStep(stepIdx);
       });
-      setSequenceData(res.data.sequence);
-      if (res.data.sequence.length > 0) updatePositions(res.data.sequence[0]);
+      setSequenceData(result.sequence as FrameData[]);
+      if (result.sequence.length > 0) updatePositions(result.sequence[0] as FrameData);
       setAppState('ready');
-      addToast(`Analysis complete — ${res.data.sequence.length} frames tracked!`, 'success');
-    } catch (err: unknown) {
-      setBackendStatus('offline');
+      setIsPlaying(true);
+      addToast(`Analysis complete — ${result.sequence.length} frames tracked!`, 'success');
+    } catch (err) {
+      console.error('Processing error:', err);
       setAppState('idle');
-      // Distinguish network errors from server errors
-      if (axios.isAxiosError(err) && err.response) {
-        const detail = err.response.data?.detail || `Server error ${err.response.status}`;
-        addToast(`Processing failed: ${detail}`, 'error', 8000);
-      } else {
-        setShowBackendHelp(true);
-      }
+      addToast(`Processing failed: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error', 8000);
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
-  };
+  }, [addToast, updatePositions]);
 
   /* --- Drag and Drop --- */
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); }, []);
@@ -342,119 +295,6 @@ function App() {
   if (appState !== 'ready') {
     return (
       <div className="landing-page" onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
-        {/* Top-right: backend status + settings */}
-        <div style={{ position: 'absolute', top: '1.5rem', right: '1.5rem', display: 'flex', alignItems: 'center', gap: '10px', zIndex: 100 }}>
-          {/* Backend status badge */}
-          <div
-            title={`Backend: ${backendStatus === 'online' ? 'Connected' : backendStatus === 'offline' ? 'Offline — click to configure' : 'Checking...'}`}
-            onClick={() => { if (backendStatus !== 'online') { setTempUrlInput(backendUrl); setShowSettings(true); } }}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '7px',
-              padding: '6px 12px',
-              borderRadius: '999px',
-              background: backendStatus === 'online'
-                ? 'rgba(16,185,129,0.1)'
-                : backendStatus === 'offline'
-                  ? 'rgba(244,63,94,0.1)'
-                  : 'rgba(255,255,255,0.05)',
-              border: `1px solid ${backendStatus === 'online' ? 'rgba(16,185,129,0.3)' : backendStatus === 'offline' ? 'rgba(244,63,94,0.3)' : 'rgba(255,255,255,0.1)'}`,
-              cursor: backendStatus !== 'online' ? 'pointer' : 'default',
-              transition: 'all 0.4s ease',
-              fontSize: '11px',
-              fontWeight: 600,
-              color: backendStatus === 'online' ? '#6ee7b7' : backendStatus === 'offline' ? '#fda4af' : 'var(--text-muted)',
-              fontFamily: 'var(--font-sans)',
-              userSelect: 'none',
-            }}
-          >
-            <span style={{
-              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-              background: backendStatus === 'online' ? '#10b981' : backendStatus === 'offline' ? '#f43f5e' : '#6b7280',
-              boxShadow: backendStatus === 'online' ? '0 0 8px rgba(16,185,129,0.6)' : backendStatus === 'offline' ? '0 0 8px rgba(244,63,94,0.5)' : 'none',
-              animation: backendStatus === 'unknown' ? 'pulse-glow 1.5s ease infinite' : 'none',
-            }} />
-            {backendStatus === 'online' ? 'Backend Online' : backendStatus === 'offline' ? 'Backend Offline' : 'Checking...'}
-          </div>
-          <button className="settings-toggle-btn" style={{ position: 'static' }} onClick={() => { setTempUrlInput(backendUrl); setShowSettings(true); }}>
-            <Settings size={18} />
-          </button>
-        </div>
-
-        {/* Settings Modal */}
-        {showSettings && (
-          <div className="settings-modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowSettings(false); }}>
-            <div className="settings-modal glass-heavy">
-              <button className="settings-close" onClick={() => setShowSettings(false)}><X size={18} /></button>
-              <h2>Backend Config</h2>
-              <p>Enter your FastAPI backend URL or Google Colab tunnel URL to process videos.</p>
-              <input type="text" value={tempUrlInput} onChange={e => setTempUrlInput(e.target.value)} placeholder="https://your-tunnel.loca.lt" className="url-input" />
-              <button className="save-url-btn" onClick={() => {
-                let url = tempUrlInput.trim();
-                if (url.endsWith('/')) url = url.slice(0, -1);
-                setBackendUrl(url);
-                localStorage.setItem('courtsense_backend_url', url);
-                setShowSettings(false);
-                addToast('Backend URL saved — checking connection…', 'info');
-              }}>Save & Connect</button>
-              <div style={{ marginTop: '20px', fontSize: '13px', color: 'var(--text-muted)' }}>
-                <p style={{ marginBottom: '6px' }}><strong style={{ color: 'var(--text-secondary)' }}>Free Processing via Google Colab:</strong></p>
-                <a href="https://colab.research.google.com/github/udayraj1238/CourtSense-AI/blob/main/colab_backend.ipynb" target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', textDecoration: 'underline' }}>
-                  Open the free Colab backend notebook →
-                </a>
-                <p style={{ marginTop: '12px' }}>Run all cells, copy the <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 5px', borderRadius: '4px' }}>loca.lt</code> URL it prints, paste it above.</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Backend Help Modal — shown when upload is attempted with no backend */}
-        {showBackendHelp && (
-          <div className="settings-modal-overlay" onClick={e => { if (e.target === e.currentTarget) setShowBackendHelp(false); }}>
-            <div className="settings-modal glass-heavy">
-              <button className="settings-close" onClick={() => setShowBackendHelp(false)}><X size={18} /></button>
-              <div style={{ fontSize: '28px', marginBottom: '12px' }}>🚫</div>
-              <h2>Backend Not Reachable</h2>
-              <p>Custom video processing requires the CourtSense AI backend to be running. It's currently unreachable at:</p>
-              <div style={{ background: 'rgba(244,63,94,0.08)', border: '1px solid rgba(244,63,94,0.2)', borderRadius: '10px', padding: '10px 14px', fontFamily: 'var(--font-mono)', fontSize: '12px', color: '#fda4af', marginBottom: '20px', wordBreak: 'break-all' }}>
-                {backendUrl}
-              </div>
-              <p style={{ fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '12px' }}>Choose an option:</p>
-
-              {/* Option 1: Colab */}
-              <div style={{ background: 'rgba(163,230,53,0.06)', border: '1px solid rgba(163,230,53,0.15)', borderRadius: '14px', padding: '16px', marginBottom: '12px' }}>
-                <div style={{ fontWeight: 700, marginBottom: '6px', fontSize: '14px' }}>✨ Option 1 — Free Google Colab (Recommended)</div>
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>Run the backend for free on Google's servers. No setup required.</div>
-                <a
-                  href="https://colab.research.google.com/github/udayraj1238/CourtSense-AI/blob/main/colab_backend.ipynb"
-                  target="_blank" rel="noreferrer"
-                  style={{ display: 'inline-block', background: 'var(--accent)', color: '#000', fontWeight: 700, fontSize: '13px', padding: '8px 16px', borderRadius: '10px', textDecoration: 'none' }}
-                >
-                  Open Colab Notebook →
-                </a>
-                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px' }}>Then run all cells, copy the tunnel URL, paste it in Settings (⚙️) above.</div>
-              </div>
-
-              {/* Option 2: Local */}
-              <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)', borderRadius: '14px', padding: '16px', marginBottom: '16px' }}>
-                <div style={{ fontWeight: 700, marginBottom: '6px', fontSize: '14px' }}>🖥️ Option 2 — Run Locally</div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', background: 'rgba(0,0,0,0.4)', borderRadius: '8px', padding: '10px 12px', color: 'var(--text-secondary)' }}>
-                  cd backend<br/>
-                  pip install -r ../requirements.txt<br/>
-                  uvicorn main:app --reload
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', gap: '10px' }}>
-                <button className="save-url-btn" style={{ flex: 1 }} onClick={() => { setShowBackendHelp(false); setTempUrlInput(backendUrl); setShowSettings(true); }}>
-                  Configure URL ⚙️
-                </button>
-                <button onClick={() => setShowBackendHelp(false)} style={{ flex: 1, padding: '1rem', background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-light)', borderRadius: '14px', color: 'var(--text-secondary)', cursor: 'pointer', fontWeight: 600, fontFamily: 'var(--font-sans)' }}>
-                  Try Demo Instead
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         <div className="landing-grid" />
         <div className="landing-glow" />
@@ -517,51 +357,20 @@ function App() {
           {appState === 'idle' && (
             <div className="animate-in-delayed-3" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <input type="file" accept="video/mp4,video/quicktime,video/webm" ref={fileInputRef} onChange={handleFileUpload} style={{ display: 'none' }} />
-              <button
-                onClick={handleUploadClick}
-                className="upload-btn"
-                style={backendStatus === 'offline' ? { opacity: 0.85 } : undefined}
-              >
+              <button onClick={() => fileInputRef.current?.click()} className="upload-btn">
                 <Upload size={18} />
-                {backendStatus === 'checking' ? 'Checking backend…' : 'Select Video to Analyze'}
+                Select Video to Analyze
               </button>
-              {backendStatus === 'offline' && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                  padding: '10px 14px',
-                  borderRadius: '12px',
-                  background: 'rgba(244,63,94,0.07)',
-                  border: '1px solid rgba(244,63,94,0.2)',
-                  fontSize: '12px',
-                  color: '#fda4af',
-                  fontFamily: 'var(--font-sans)',
-                }}>
-                  <span>⚠</span>
-                  <span>Backend offline — <button onClick={() => setShowBackendHelp(true)} style={{ background:'none', border:'none', color:'var(--accent)', cursor:'pointer', fontFamily:'var(--font-sans)', fontSize:'12px', fontWeight:600, padding:0, textDecoration:'underline' }}>see how to start it</button>, or try the demo below.</span>
-                </div>
-              )}
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.5 }}>
+                ✨ Processed entirely in your browser — no server, no upload
+              </div>
               <button onClick={loadDemo} className="demo-btn">
                 Or load pre-generated demo →
               </button>
             </div>
           )}
 
-          {appState === 'uploading' && (
-            <div className="status-card animate-scale-in">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <Upload size={18} style={{ color: 'var(--accent)' }} />
-                  <span style={{ fontWeight: 700, fontSize: '15px' }}>Uploading Video...</span>
-                </div>
-                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)', fontSize: '20px', fontWeight: 700 }}>
-                  {uploadProgress}%
-                </span>
-              </div>
-              <div className="progress-bar-container">
-                <div className="progress-bar-fill" style={{ width: `${uploadProgress}%` }} />
-              </div>
-            </div>
-          )}
+
 
           {appState === 'processing' && (
             <div className="status-card animate-scale-in" style={{ textAlign: 'center' }}>
@@ -571,19 +380,26 @@ function App() {
                 <div className="spinner-ring-fill-2" />
               </div>
               <h3 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '6px', letterSpacing: '-0.02em' }}>
-                Analyzing Match Data
+                Analysing Your Video
               </h3>
-              <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: '0 0 20px' }}>
-                Running YOLOv8-Pose + Trajectory Physics Pipeline
+              <p style={{ color: 'var(--text-muted)', fontSize: '13px', margin: '0 0 16px' }}>
+                {processingLabel || 'Running in-browser CV pipeline…'}
               </p>
-              <div className="processing-steps">
+              {/* Real progress bar */}
+              <div className="progress-bar-container" style={{ marginBottom: '16px' }}>
+                <div className="progress-bar-fill" style={{ width: `${processingPct}%`, transition: 'width 0.3s ease' }} />
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                {Math.round(processingPct)}% complete
+              </div>
+              <div className="processing-steps" style={{ marginTop: '16px' }}>
                 {PROCESSING_STEPS.map((label, i) => {
-                  const state = i < processingStep ? 'done' : i === processingStep ? 'active' : 'pending';
+                  const st = i < processingStep ? 'done' : i === processingStep ? 'active' : 'pending';
                   return (
-                    <div key={i} className={`processing-step ${state}`}>
+                    <div key={i} className={`processing-step ${st}`}>
                       <div className="processing-step-dot" />
                       <span className="processing-step-label" style={{ fontSize: '13px', color: 'inherit' }}>{label}</span>
-                      {state === 'done' && <span className="processing-step-check">✓</span>}
+                      {st === 'done' && <span className="processing-step-check">✓</span>}
                     </div>
                   );
                 })}
