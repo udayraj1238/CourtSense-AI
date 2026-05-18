@@ -348,8 +348,8 @@ export async function processVideoFile(
       missCount++;
       if (prevBall && missCount <= 6) {
         // physics extrapolation: gravity pulls down
-        prevBall = { x: prevBall.x + prevBallV.x, y: prevBall.y + prevBallV.vy + 1.2 };
-        prevBallV = { x: prevBallV.x * 0.95, y: prevBallV.vy + 1.2 };
+        prevBall = { x: prevBall.x + prevBallV.x, y: prevBall.y + prevBallV.y + 1.2 };
+        prevBallV = { x: prevBallV.x * 0.95, y: prevBallV.y + 1.2 };
       } else { prevBall = null; missCount = 0; }
     }
 

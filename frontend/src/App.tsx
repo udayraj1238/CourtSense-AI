@@ -62,21 +62,12 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [frame, setFrame] = useState(0);
   const [sequenceData, setSequenceData] = useState<FrameData[]>([]);
-  const [appState, setAppState] = useState<'idle' | 'uploading' | 'processing' | 'ready'>('idle');
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const [appState, setAppState] = useState<'idle' | 'processing' | 'ready'>('idle');
   const [speed, setSpeed] = useState(1);
   const [cameraPreset, setCameraPreset] = useState<'default' | 'overhead' | 'p1' | 'p2'>('default');
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [processingStep, setProcessingStep] = useState(0);
 
-  const [backendUrl, setBackendUrl] = useState(() =>
-    localStorage.getItem('courtsense_backend_url') || 'http://localhost:8000'
-  );
-  const [showSettings, setShowSettings] = useState(false);
-  const [tempUrlInput, setTempUrlInput] = useState('');
-  // 'unknown' = not yet checked, 'online' = reachable, 'offline' = not reachable
-  const [backendStatus, setBackendStatus] = useState<'unknown' | 'online' | 'offline'>('unknown');
-  const [showBackendHelp, setShowBackendHelp] = useState(false);
 
   const [ballPos, setBallPos] = useState<[number, number, number]>([0, 1, 0]);
   const [p1Pos, setP1Pos] = useState<[number, number, number]>([0, 0, 10]);
@@ -103,6 +94,37 @@ function App() {
 
   const { toasts, addToast, dismiss } = useToast();
 
+  /* --- Position Updates (declared first — referenced by loadDemo & handleFileUpload) --- */
+  const updatePositions = useCallback((fd: FrameData) => {
+    if (fd.ball) {
+      const np: [number, number, number] = [fd.ball.position.x, fd.ball.position.y, fd.ball.position.z];
+      setBallPos(np);
+      trailRef.current = [...trailRef.current.slice(-15), np];
+      setBallTrail(trailRef.current.slice());
+      if (heatRef.current.length === 0 || Math.random() > 0.67) {
+        heatRef.current = [...heatRef.current, [np[0], np[2]]];
+        setHeatmapData(heatRef.current.slice());
+      }
+    }
+    let newP1: [number,number,number] | null = null;
+    let newP2: [number,number,number] | null = null;
+    for (const player of fd.players) {
+      const pos: [number, number, number] = [player.position.x, player.position.y, player.position.z];
+      if (player.id.includes('top')) newP1 = pos;
+      else if (player.id.includes('bottom')) newP2 = pos;
+    }
+    if (newP1) setP1Pos(newP1);
+    if (newP2) setP2Pos(newP2);
+    if (fd.ball_speed_kmh !== undefined) setBallSpeed(fd.ball_speed_kmh);
+    if (fd.spin_rate_rpm !== undefined) setSpinRate(fd.spin_rate_rpm);
+    if (fd.hitter) {
+      if (hittingTimerRef.current) clearTimeout(hittingTimerRef.current);
+      if (fd.hitter === 'p1') { setP1Hitting(true); setP2Hitting(false); }
+      else { setP2Hitting(true); setP1Hitting(false); }
+      hittingTimerRef.current = setTimeout(() => { setP1Hitting(false); setP2Hitting(false); }, 250);
+    }
+  }, []);
+
   /* --- Demo loads static JSON — no backend needed --- */
   const loadDemo = useCallback(() => {
     setAppState('processing');
@@ -125,6 +147,9 @@ function App() {
         console.error(err);
       });
   }, [updatePositions, addToast]);
+
+  /* --- Client-side video processing --- */
+  const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     const file = e.target.files[0];
     if (!file.type.startsWith('video/')) {
@@ -172,38 +197,8 @@ function App() {
     if (fileInputRef.current) { fileInputRef.current.files = dt.files; fileInputRef.current.dispatchEvent(new Event('change', { bubbles: true })); }
   }, [addToast]);
 
-  /* --- Position Updates: single batched setState per frame --- */
-  const updatePositions = useCallback((fd: FrameData) => {
-    if (fd.ball) {
-      const np: [number, number, number] = [fd.ball.position.x, fd.ball.position.y, fd.ball.position.z];
-      setBallPos(np);
-      trailRef.current = [...trailRef.current.slice(-15), np];
-      setBallTrail(trailRef.current.slice());
-      // Only append heatmap every 3rd frame to limit canvas redraws
-      if (heatRef.current.length === 0 || Math.random() > 0.67) {
-        heatRef.current = [...heatRef.current, [np[0], np[2]]];
-        setHeatmapData(heatRef.current.slice());
-      }
-    }
-    let newP1: [number,number,number] | null = null;
-    let newP2: [number,number,number] | null = null;
-    for (const player of fd.players) {
-      const pos: [number, number, number] = [player.position.x, player.position.y, player.position.z];
-      if (player.id.includes('top')) newP1 = pos;
-      else if (player.id.includes('bottom')) newP2 = pos;
-    }
-    if (newP1) setP1Pos(newP1);
-    if (newP2) setP2Pos(newP2);
-    if (fd.ball_speed_kmh !== undefined) setBallSpeed(fd.ball_speed_kmh);
-    if (fd.spin_rate_rpm !== undefined) setSpinRate(fd.spin_rate_rpm);
-    // Hitting flash: brief true pulse when hitter is set
-    if (fd.hitter) {
-      if (hittingTimerRef.current) clearTimeout(hittingTimerRef.current);
-      if (fd.hitter === 'p1') { setP1Hitting(true); setP2Hitting(false); }
-      else { setP2Hitting(true); setP1Hitting(false); }
-      hittingTimerRef.current = setTimeout(() => { setP1Hitting(false); setP2Hitting(false); }, 250);
-    }
-  }, []);
+
+
 
   /* --- Animation Loop --- */
   useEffect(() => {
