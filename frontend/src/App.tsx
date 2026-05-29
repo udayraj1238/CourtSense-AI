@@ -350,20 +350,71 @@ function App() {
           </div>
 
           {appState === 'idle' && (
-            <div className="animate-in-delayed-3" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div className="animate-in-delayed-3" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <input type="file" accept="video/mp4,video/quicktime,video/webm" ref={fileInputRef} onChange={handleFileUpload} style={{ display: 'none' }} />
+
+              {/* Upload button */}
               <button onClick={() => fileInputRef.current?.click()} className="upload-btn">
                 <Upload size={18} />
-                Select Video to Analyze
+                Select Your Tennis Video
               </button>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.5 }}>
-                ✨ Processed entirely in your browser — no server, no upload
+                ✨ Analysed entirely in your browser — no server, no upload
               </div>
-              <button onClick={loadDemo} className="demo-btn">
-                Or load pre-generated demo →
+
+              {/* Divider */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '2px 0' }}>
+                <div style={{ flex: 1, height: '1px', background: 'var(--border-subtle)' }} />
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, letterSpacing: '0.06em' }}>OR WATCH THE DEMO</span>
+                <div style={{ flex: 1, height: '1px', background: 'var(--border-subtle)' }} />
+              </div>
+
+              {/* Demo video card */}
+              <button onClick={loadDemo} className="demo-video-card" style={{
+                position: 'relative', width: '100%', borderRadius: '16px',
+                overflow: 'hidden', border: '1px solid rgba(163,230,53,0.25)',
+                background: 'rgba(0,0,0,0.5)', cursor: 'pointer', padding: 0,
+                display: 'block', textAlign: 'left',
+              }}>
+                {/* Video thumbnail strip */}
+                <div style={{ position: 'relative', height: '110px', overflow: 'hidden' }}>
+                  <video
+                    src={`${import.meta.env.BASE_URL}demo_video.mp4`}
+                    autoPlay muted loop playsInline
+                    style={{ width: '100%', height: '160px', objectFit: 'cover', objectPosition: 'center 30%',
+                      filter: 'brightness(0.65) saturate(1.2)', marginTop: '-25px' }}
+                  />
+                  {/* Gradient overlay */}
+                  <div style={{ position: 'absolute', inset: 0,
+                    background: 'linear-gradient(to bottom, rgba(0,0,0,0) 40%, rgba(6,6,10,0.95) 100%)' }} />
+                  {/* Play badge */}
+                  <div style={{
+                    position: 'absolute', top: '10px', right: '10px',
+                    background: 'rgba(163,230,53,0.9)', borderRadius: '999px',
+                    padding: '3px 10px', fontSize: '10px', fontWeight: 800,
+                    color: '#000', letterSpacing: '0.05em',
+                  }}>▶ 3D REPLAY</div>
+                  {/* Duration */}
+                  <div style={{
+                    position: 'absolute', bottom: '10px', right: '10px',
+                    background: 'rgba(0,0,0,0.7)', borderRadius: '6px',
+                    padding: '2px 7px', fontSize: '10px', color: 'var(--text-secondary)',
+                    fontFamily: 'var(--font-mono)',
+                  }}>0:28</div>
+                </div>
+                {/* Card text */}
+                <div style={{ padding: '10px 14px 12px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '3px', letterSpacing: '-0.01em' }}>
+                    Djokovic vs Nadal — Epic Rally
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    70 shots · 200 km/h peak · 28 seconds · Clay court
+                  </div>
+                </div>
               </button>
             </div>
           )}
+
 
 
 
