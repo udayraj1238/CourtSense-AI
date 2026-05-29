@@ -40,7 +40,7 @@ function r3(n: number) { return Math.round(n * 1000) / 1000; }
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
 function easeOut(t: number) { return 1 - (1 - t) ** 2.4; }
-function rand(lo: number, hi: number, rng: () => number) { return lo + rng() * (hi - lo); }
+function _rand(lo: number, hi: number, rng: () => number) { return lo + rng() * (hi - lo); } void _rand;
 
 // ─── Video loader ─────────────────────────────────────────────────────────────
 async function loadVideo(file: File): Promise<HTMLVideoElement> {
@@ -210,22 +210,16 @@ function interpolatePlayers(timeline: PosAt[], t: number): { p1x: number; p1z: n
   return timeline[timeline.length - 1];
 }
 
-// ─── Synthetic ball rally (physics engine) ────────────────────────────────────
-type ShotType = 'drive' | 'topspin' | 'slice' | 'lob';
-
-interface ShotSpec {
-  speed: [number, number];  // km/h range
-  arc: number;              // arc multiplier
-  spin: [number, number];   // rpm range
-  weight: number;
-}
-
-const SHOTS: Record<ShotType, ShotSpec> = {
-  drive:   { speed: [145, 198], arc: 0.032, spin: [1600, 2600], weight: 0.38 },
-  topspin: { speed: [105, 158], arc: 0.082, spin: [2500, 4200], weight: 0.34 },
-  slice:   { speed:  [85, 132], arc: 0.024, spin: [ 400, 1200], weight: 0.17 },
-  lob:     { speed:  [55,  88], arc: 0.210, spin: [ 200,  700], weight: 0.11 },
-};
+// ─── Synthetic ball rally (smooth physics engine) ─────────────────────────────
+// Visual speeds are ~40% of real tennis speeds so each shot lasts
+// 40-90 frames at 30fps and the ball arc is clearly visible.
+const SHOT_TYPES = [
+  { name:'heavy_topspin', spdLo: 72, spdHi:102, arc:0.092, spinLo:2800, spinHi:4500, w:0.32 },
+  { name:'flat_drive',    spdLo: 90, spdHi:124, arc:0.030, spinLo:1400, spinHi:2400, w:0.28 },
+  { name:'slice',         spdLo: 55, spdHi: 82, arc:0.025, spinLo: 350, spinHi:1100, w:0.18 },
+  { name:'crosscourt',    spdLo: 78, spdHi:108, arc:0.058, spinLo:2000, spinHi:3200, w:0.14 },
+  { name:'lob',           spdLo: 34, spdHi: 55, arc:0.280, spinLo: 180, spinHi: 600, w:0.08 },
+] as const;
 
 /** Seeded pseudo-random (simple LCG) so rally is deterministic per video */
 function mkRng(seed: number) {
@@ -236,10 +230,22 @@ function mkRng(seed: number) {
   };
 }
 
-function pickShot(rng: () => number): ShotSpec {
+function pickShotType(rng: () => number) {
   let r = rng(), cum = 0;
-  for (const st of Object.values(SHOTS)) { cum += st.weight; if (r < cum) return st; }
-  return SHOTS.drive;
+  for (const s of SHOT_TYPES) { cum += s.w; if (r < cum) return s; }
+  return SHOT_TYPES[0];
+}
+
+// Move toward target without exceeding maxStep (velocity cap)
+function moveToward(from: number, to: number, maxStep: number): number {
+  const diff = to - from;
+  if (Math.abs(diff) <= maxStep) return to;
+  return from + Math.sign(diff) * maxStep;
+}
+
+function easeOutCubic(t: number): number { return 1 - Math.pow(1 - t, 3); }
+function sCurve(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
 interface BallFrame {
@@ -247,12 +253,9 @@ interface BallFrame {
   speed: number; spin: number; hitter: 'p1' | 'p2' | null;
 }
 
-/**
- * Generate a synthetic tennis rally lasting `duration` seconds at OUTPUT_FPS.
- * P1 stays near +z baseline, P2 near -z baseline.
- * The ball arcs back and forth with realistic physics.
- * Player positions come from the video's MediaPipe detections.
- */
+const MAX_PLAYER_SPD = 0.10; // m/frame at 30fps → 3.0 m/s realistic sprint
+const REACTION_FRAMES = 8;   // frames before receiver starts moving
+
 function generateRally(
   duration: number,
   timeline: PosAt[],
@@ -262,93 +265,101 @@ function generateRally(
   const ballFrames: BallFrame[] = [];
   const playerFrames: { p1x: number; p1z: number; p2x: number; p2z: number }[] = [];
 
-  // Plan shots
+  // ── Plan shot sequence ──────────────────────────────────────────────────
   interface Shot {
     hitter: 'p1' | 'p2';
-    cx: number; cy: number; cz: number;   // contact point
-    lx: number; lz: number;               // landing point
-    spec: ShotSpec;
-    speed: number;
-    nFrames: number;
-    startFrame: number;
+    cx: number; cy: number; cz: number;
+    lx: number; lz: number;
+    arc: number; speed: number; spin: number;
+    nFrames: number; startFrame: number;
   }
-
   const shots: Shot[] = [];
   let frame = 0;
-
-  // Initial contact from P1
   const initPos = interpolatePlayers(timeline, 0);
-  let cx = initPos.p1x, cz = initPos.p1z, cy = 0.9;
+  let cx = initPos.p1x, cz = initPos.p1z, cy = 0.88;
   let hitter: 'p1' | 'p2' = 'p1';
 
-  while (frame < totalFrames) {
-    const spec = pickShot(rng);
-    const speed = rand(spec.speed[0], spec.speed[1], rng);
-    const _spin = rand(spec.spin[0], spec.spin[1], rng); void _spin;
-
-    // Landing spot on opposite half
-    const lx = clamp(rand(-HW + 0.8, HW - 0.8, rng), -HW + 0.5, HW - 0.5);
+  while (frame < totalFrames - 10) {
+    const spec  = pickShotType(rng);
+    const speed = spec.spdLo + rng() * (spec.spdHi - spec.spdLo);
+    const spin  = Math.round(spec.spinLo + rng() * (spec.spinHi - spec.spinLo));
+    const lx = clamp(rng() * (HW * 2) - HW + 0.5, -HW + 0.4, HW - 0.4);
     const lz = hitter === 'p1'
-      ? clamp(rand(HL * 0.42, HL * 0.88, rng), 1, HL - 0.3)
-      : clamp(rand(-HL * 0.88, -HL * 0.42, rng), -HL + 0.3, -1);
-
+      ? clamp(rng() * HL * 0.45 - HL * 0.88, -HL + 0.3, -1.2)
+      : clamp(rng() * HL * 0.45 + HL * 0.50,  1.2, HL - 0.3);
     const dist = Math.hypot(lx - cx, lz - cz);
-    const ft = dist / (speed / 3.6);
-    const nFrames = Math.max(10, Math.round(ft * OUTPUT_FPS));
-
-    if (frame + nFrames > totalFrames + 20) break;
-
-    shots.push({ hitter, cx, cy, cz, lx, lz, spec, speed, nFrames, startFrame: frame });
+    const nFrames = Math.max(35, Math.round((dist / (speed / 3.6)) * OUTPUT_FPS));
+    if (frame + nFrames > totalFrames + 10) break;
+    shots.push({ hitter, cx, cy, cz, lx, lz, arc: spec.arc, speed, spin, nFrames, startFrame: frame });
     frame += nFrames;
-
-    // Next shot starts from landing
-    cx = lx; cy = rand(0.45, 1.05, rng); cz = lz;
+    cx = lx + (rng() - 0.5) * 0.5;
+    cy = 0.42 + rng() * 0.55;
+    cz = lz;
     hitter = hitter === 'p1' ? 'p2' : 'p1';
   }
 
-  // Render frames
+  // ── Render frames with velocity-capped player movement ─────────────────
+  const pos0 = interpolatePlayers(timeline, 0);
+  let p1x = pos0.p1x, p1z = pos0.p1z;
+  let p2x = pos0.p2x, p2z = pos0.p2z;
+
   for (let fi = 0; fi < totalFrames; fi++) {
-    const t = fi / OUTPUT_FPS;
-    const ppos = interpolatePlayers(timeline, t);
-
-    // Find current shot
     let sh = shots[shots.length - 1];
-    for (const s of shots) {
-      if (fi < s.startFrame + s.nFrames) { sh = s; break; }
-    }
+    for (const s of shots) { if (fi < s.startFrame + s.nFrames) { sh = s; break; } }
 
-    const shotT = Math.max(0, Math.min(1, (fi - sh.startFrame) / sh.nFrames));
-    const peak = sh.cy + Math.hypot(sh.lx - sh.cx, sh.lz - sh.cz) * sh.spec.arc + rand(0.05, 0.3, rng) * 0;
-    const bx = lerp(sh.cx, sh.lx, shotT);
-    const bz = lerp(sh.cz, sh.lz, shotT);
-    const by = Math.max(0.07, sh.cy * (1 - shotT) + 0.07 * shotT + peak * Math.sin(shotT * Math.PI));
+    const shotT = clamp((fi - sh.startFrame) / sh.nFrames, 0, 1);
 
-    // Speed profile
-    const impact = Math.max(0, 1 - shotT * 4);
-    const descent = Math.max(0, (shotT - 0.55) / 0.45);
-    const spd = sh.speed * (0.28 + 0.72 * Math.max(impact, descent * 0.5));
+    // S-curve horizontal motion (smooth start & end)
+    const horzT = sCurve(shotT);
+    const bx = lerp(sh.cx, sh.lx, horzT);
+    const bz = lerp(sh.cz, sh.lz, horzT);
+    const arcH = Math.hypot(sh.lx - sh.cx, sh.lz - sh.cz) * sh.arc;
+    const by = Math.max(0.07, lerp(sh.cy, 0.12, shotT) + arcH * Math.sin(shotT * Math.PI));
 
-    // Player positions: near their real positions but move to intercept
-    const recvT = easeOut(Math.min(1, shotT * 1.8));
-    let p1x = ppos.p1x, p1z = ppos.p1z;
-    let p2x = ppos.p2x, p2z = ppos.p2z;
+    // Speed: fast off racket, decelerates smoothly
+    const spd = sh.speed * (0.20 + 0.80 * Math.pow(clamp(1 - shotT, 0, 1), 0.5));
 
+    // Player targets: hitter recovers, receiver sprints after reaction delay
+    const reactionT = clamp((fi - sh.startFrame - REACTION_FRAMES) / Math.max(1, sh.nFrames - REACTION_FRAMES), 0, 1);
+    const sprintFrac = easeOutCubic(reactionT);
+    const p1BaseX = 0, p1BaseZ = HL  * 0.905;
+    const p2BaseX = 0, p2BaseZ = -HL * 0.905;
+
+    let tP1x: number, tP1z: number, tP2x: number, tP2z: number;
     if (sh.hitter === 'p1') {
-      // P2 (receiver) sprints toward landing
-      p2x = lerp(ppos.p2x, clamp(sh.lx + rand(-0.3, 0.3, rng) * 0, -HW + 0.3, HW - 0.3), recvT);
-      p2z = lerp(ppos.p2z, clamp(sh.lz + rand(-0.2, 0.2, rng) * 0, -HL + 0.2, -0.5), recvT);
+      tP1x = lerp(sh.cx, p1BaseX, easeOutCubic(shotT * 1.3));
+      tP1z = lerp(sh.cz, p1BaseZ, easeOutCubic(shotT * 1.3));
+      tP2x = lerp(p2BaseX, clamp(sh.lx, -HW + 0.4, HW - 0.4), sprintFrac);
+      tP2z = lerp(p2BaseZ, clamp(sh.lz, -HL + 0.3, -1.0), sprintFrac);
     } else {
-      p1x = lerp(ppos.p1x, clamp(sh.lx + rand(-0.3, 0.3, rng) * 0, -HW + 0.3, HW - 0.3), recvT);
-      p1z = lerp(ppos.p1z, clamp(sh.lz + rand(-0.2, 0.2, rng) * 0, 0.5, HL - 0.2), recvT);
+      tP2x = lerp(sh.cx, p2BaseX, easeOutCubic(shotT * 1.3));
+      tP2z = lerp(sh.cz, p2BaseZ, easeOutCubic(shotT * 1.3));
+      tP1x = lerp(p1BaseX, clamp(sh.lx, -HW + 0.4, HW - 0.4), sprintFrac);
+      tP1z = lerp(p1BaseZ, clamp(sh.lz,  1.0, HL - 0.3), sprintFrac);
     }
+
+    // Blend with detected positions from MediaPipe
+    const detectedPos = interpolatePlayers(timeline, fi / OUTPUT_FPS);
+    tP1x = lerp(tP1x, detectedPos.p1x, 0.25);
+    tP2x = lerp(tP2x, detectedPos.p2x, 0.25);
+
+    // Velocity-cap movement
+    p1x = moveToward(p1x, tP1x, MAX_PLAYER_SPD);
+    p1z = moveToward(p1z, tP1z, MAX_PLAYER_SPD);
+    p2x = moveToward(p2x, tP2x, MAX_PLAYER_SPD);
+    p2z = moveToward(p2z, tP2z, MAX_PLAYER_SPD);
+
+    // Enforce court halves
+    p1z = clamp(p1z,  0.5, HL  - 0.2);
+    p2z = clamp(p2z, -HL + 0.2, -0.5);
+    p1x = clamp(p1x, -HW + 0.3, HW - 0.3);
+    p2x = clamp(p2x, -HW + 0.3, HW - 0.3);
 
     ballFrames.push({
       bx: r3(bx), by: r3(by), bz: r3(bz),
-      speed: r3(spd),
-      spin: Math.round(sh.spec.spin[0] + rng() * (sh.spec.spin[1] - sh.spec.spin[0])),
+      speed: r3(spd), spin: sh.spin,
       hitter: shotT < 0.05 ? sh.hitter : null,
     });
-
     playerFrames.push({ p1x: r3(p1x), p1z: r3(p1z), p2x: r3(p2x), p2z: r3(p2z) });
   }
 

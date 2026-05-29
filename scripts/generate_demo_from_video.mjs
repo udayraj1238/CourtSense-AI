@@ -1,30 +1,26 @@
 #!/usr/bin/env node
 /**
- * generate_demo_from_video.mjs
+ * generate_demo_from_video.mjs  v2
+ * Generates demo_data.json for the Djokovic vs Nadal epic rally.
  *
- * Runs the same rally-generation pipeline as videoProcessor v3
- * (offline, no browser/MediaPipe needed) to produce demo_data.json
- * from the Djokovic_Nadal video.
- *
- * Since we can't run MediaPipe in Node without complex setup,
- * we use known broadcast-camera player positions for this specific
- * Djokovic vs Nadal match clip (standard behind-baseline TV angle):
- *   - P1 (Djokovic, near side): z ≈ +10.8m, x varies ±1.5m
- *   - P2 (Nadal, far side):     z ≈ -10.8m, x varies ±2.0m
- *
- * The rally script produces 30fps data matching the video duration
- * using the same physics engine as the browser processor.
+ * Key improvements:
+ *  - Velocity-capped player movement (max 0.10 m/frame = 3 m/s sprint)
+ *    → no more teleporting
+ *  - Visual ball speeds 40% slower so shots last 40-90 frames (1.3-3s)
+ *    → looks smooth at 30fps
+ *  - Reaction delay before receiver starts moving (0.25s)
+ *  - Gaussian smoothing pass at the end
+ *  - Rally length tuned to match Djokovic/Nadal clay-court baseline style
  */
 
 import { writeFileSync } from 'fs';
 
-// ── Court constants ────────────────────────────────────────────────────────────
-const HW = 4.115;   // half-width metres
-const HL = 11.885;  // half-length metres
+const HW  = 4.115;    // half-width  (m)
+const HL  = 11.885;   // half-length (m)
 const FPS = 30;
-const DURATION = 28; // seconds (matches clip length)
+const DURATION = 28;  // seconds
 
-// ── Seeded RNG ─────────────────────────────────────────────────────────────────
+// ── Seeded LCG RNG ─────────────────────────────────────────────────────────
 function mkRng(seed) {
   let s = seed | 0;
   return () => {
@@ -32,152 +28,165 @@ function mkRng(seed) {
     return (s >>> 0) / 4294967296;
   };
 }
+const rng = mkRng(6963094);
 
-function rand(lo, hi, rng) { return lo + rng() * (hi - lo); }
+function rand(lo, hi) { return lo + rng() * (hi - lo); }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function lerp(a, b, t) { return a + (b - a) * t; }
 function r3(n) { return Math.round(n * 1000) / 1000; }
-function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
 
-// ── Shot types ─────────────────────────────────────────────────────────────────
+// Move value toward target without exceeding maxStep
+function moveToward(from, to, maxStep) {
+  const diff = to - from;
+  if (Math.abs(diff) <= maxStep) return to;
+  return from + Math.sign(diff) * maxStep;
+}
+
+function easeIn(t) { return t * t * t; }
+function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+
+// ── Shot catalogue (VISUAL speeds — ~40% slower for smooth 3D appearance) ──
+// Real tennis: drive 145-200 km/h. Visually at 30fps we use ~85-120 km/h
+// so each shot lasts 40-90 frames and the ball arc is clearly visible.
 const SHOTS = [
-  { name:'heavy_topspin', speedLo:115, speedHi:172, arc:0.078, spinLo:2800, spinHi:4500, w:0.32 },
-  { name:'flat_drive',    speedLo:152, speedHi:205, arc:0.026, spinLo:1400, spinHi:2400, w:0.28 },
-  { name:'slice',         speedLo: 88, speedHi:138, arc:0.022, spinLo: 350, spinHi:1000, w:0.18 },
-  { name:'crosscourt',    speedLo:128, speedHi:168, arc:0.052, spinLo:2000, spinHi:3200, w:0.14 },
-  { name:'lob',           speedLo: 52, speedHi: 84, arc:0.240, spinLo: 180, spinHi: 600, w:0.08 },
+  { name:'heavy_topspin', spdLo: 72, spdHi:102, arc:0.092, spinLo:2800, spinHi:4500, w:0.32 },
+  { name:'flat_drive',    spdLo: 90, spdHi:124, arc:0.030, spinLo:1400, spinHi:2400, w:0.28 },
+  { name:'slice',         spdLo: 55, spdHi: 82, arc:0.025, spinLo: 350, spinHi:1100, w:0.18 },
+  { name:'crosscourt',    spdLo: 78, spdHi:108, arc:0.058, spinLo:2000, spinHi:3200, w:0.14 },
+  { name:'lob',           spdLo: 34, spdHi: 55, arc:0.280, spinLo: 180, spinHi: 600, w:0.08 },
 ];
 
-function pickShot(rng) {
+function pickShot() {
   let r = rng(), cum = 0;
   for (const s of SHOTS) { cum += s.w; if (r < cum) return s; }
   return SHOTS[0];
 }
 
-// ── Player position timeline (Djokovic/Nadal specific) ─────────────────────────
-// Based on typical behind-baseline TV camera angles for Roland Garros clay
-// P1 = Djokovic (near side, top of TV frame = bottom of court = positive z)
-// P2 = Nadal (far side)
-function makePlayerTimeline(rng, duration) {
-  // Generate realistic lateral movement patterns
-  // Djokovic is known for efficient footwork, Nadal for heavy lefty angles
-  const timeline = [];
-  const steps = Math.floor(duration / 0.5); // keyframe every 0.5s
+// ── Player velocity cap ─────────────────────────────────────────────────────
+const MAX_PLAYER_SPEED = 0.10; // m/frame at 30fps  →  3.0 m/s sprint
+const REACTION_FRAMES  = 8;    // frames before receiver starts moving (~0.27s)
 
-  let p1x = rand(-0.4, 0.4, rng);
-  let p2x = rand(-0.6, 0.6, rng);
+// ── Main rally generator ────────────────────────────────────────────────────
+function generateRally() {
+  const totalFrames = Math.ceil(DURATION * FPS);
 
-  for (let i = 0; i <= steps; i++) {
-    const t = (i / steps) * duration;
-    // Smooth drifting lateral movement
-    p1x = clamp(p1x + rand(-0.35, 0.35, rng), -HW + 0.5, HW - 0.5);
-    p2x = clamp(p2x + rand(-0.40, 0.40, rng), -HW + 0.5, HW - 0.5);
-    timeline.push({
-      t,
-      p1: { x: p1x, z: HL * 0.905 + rand(-0.3, 0.15, rng) },
-      p2: { x: p2x, z: -HL * 0.905 + rand(-0.15, 0.3, rng) },
-    });
-  }
-  return timeline;
-}
-
-function interpolatePlayers(timeline, t) {
-  if (t <= timeline[0].t) return timeline[0];
-  if (t >= timeline[timeline.length - 1].t) return timeline[timeline.length - 1];
-  for (let i = 0; i < timeline.length - 1; i++) {
-    const a = timeline[i], b = timeline[i + 1];
-    if (t >= a.t && t < b.t) {
-      const f = easeInOut((t - a.t) / (b.t - a.t));
-      return {
-        p1: { x: lerp(a.p1.x, b.p1.x, f), z: lerp(a.p1.z, b.p1.z, f) },
-        p2: { x: lerp(a.p2.x, b.p2.x, f), z: lerp(a.p2.z, b.p2.z, f) },
-      };
-    }
-  }
-  return timeline[timeline.length - 1];
-}
-
-// ── Rally generator ────────────────────────────────────────────────────────────
-function generateRally(rng, duration, playerTimeline) {
-  const totalFrames = Math.ceil(duration * FPS);
-
-  // Plan shot sequence
+  // ─── Plan shot sequence ───────────────────────────────────────────────────
   const shots = [];
-  let frame = 0;
+  let frame  = 0;
   let hitter = 'p1';
 
-  // Starting positions from timeline
-  let cx = rand(-0.5, 0.5, rng);
-  let cy = 0.85;
+  // Starting ball contact point (P1 near baseline, slightly off-centre)
+  let cx = rand(-0.6, 0.6);
+  let cy = 0.88;
   let cz = HL * 0.905;
 
-  while (frame < totalFrames) {
-    const spec = pickShot(rng);
-    const speed = rand(spec.speedLo, spec.speedHi, rng);
-    const spin  = Math.round(rand(spec.spinLo, spec.spinHi, rng));
+  while (frame < totalFrames - 10) {
+    const spec  = pickShot();
+    const speed = rand(spec.spdLo, spec.spdHi);
+    const spin  = Math.round(rand(spec.spinLo, spec.spinHi));
 
-    // Landing zone: deep in opponent's court (realistic for Djok/Nadal)
-    const lx = clamp(rand(-HW + 0.7, HW - 0.7, rng), -HW + 0.4, HW - 0.4);
-    const lzBase = hitter === 'p1'
-      ? rand(-HL * 0.88, -HL * 0.55, rng)   // P2 side: deep or mid
-      : rand( HL * 0.55,  HL * 0.88, rng);  // P1 side
+    // Landing: realistic deep-court targets for Djokovic/Nadal style
+    const lx = clamp(rand(-HW + 0.6, HW - 0.6), -HW + 0.4, HW - 0.4);
+    const lz = hitter === 'p1'
+      ? clamp(rand(-HL * 0.88, -HL * 0.50), -HL + 0.3, -1.2)   // deep
+      : clamp(rand( HL * 0.50,  HL * 0.88),  1.2, HL - 0.3);
 
-    const dist = Math.hypot(lx - cx, lzBase - cz);
-    const flightTime = dist / (speed / 3.6);
-    const nFrames = Math.max(12, Math.round(flightTime * FPS));
+    const dist     = Math.hypot(lx - cx, lz - cz);
+    const flightT  = dist / (speed / 3.6);
+    const nFrames  = Math.max(35, Math.round(flightT * FPS));    // min 35 frames
 
-    if (frame + nFrames > totalFrames + 15) break;
+    if (frame + nFrames > totalFrames + 10) break;
 
-    shots.push({ hitter, cx, cy, cz, lx, lz: lzBase, spec, speed, spin, nFrames, startFrame: frame });
+    shots.push({ hitter, cx, cy, cz, lx, lz, spec, speed, spin, nFrames, startFrame: frame });
     frame += nFrames;
 
-    // Next contact point
-    cx = lx + rand(-0.25, 0.25, rng);
-    cy = rand(0.4, 1.1, rng);
-    cz = lzBase;
+    // Next contact from landing (bounce back up slightly)
+    cx = lx + rand(-0.3, 0.3);
+    cy = rand(0.42, 0.98);
+    cz = lz;
     hitter = hitter === 'p1' ? 'p2' : 'p1';
   }
 
-  // Render frames
-  const sequence = [];
-  for (let fi = 0; fi < totalFrames; fi++) {
-    const t = fi / FPS;
-    const pos = interpolatePlayers(playerTimeline, t);
+  // ─── Render frames ────────────────────────────────────────────────────────
+  // Track player positions as actual state (velocity-capped)
+  let p1x = rand(-0.4, 0.4);
+  let p1z = HL  * 0.905;
+  let p2x = rand(-0.6, 0.6);
+  let p2z = -HL * 0.905;
 
-    // Find current shot
+  const sequence = [];
+  let prevBx = 0, prevBy = 1, prevBz = 0;
+
+  for (let fi = 0; fi < totalFrames; fi++) {
+    // ── Current shot ───────────────────────────────────────────────────────
     let sh = shots[shots.length - 1];
     for (const s of shots) {
       if (fi < s.startFrame + s.nFrames) { sh = s; break; }
     }
 
-    const shotT = clamp((fi - sh.startFrame) / sh.nFrames, 0, 1);
+    const rawT  = (fi - sh.startFrame) / sh.nFrames;
+    const shotT = clamp(rawT, 0, 1);
 
-    // Ball position: smooth lerp with parabolic height
-    const bx = lerp(sh.cx, sh.lx, shotT);
-    const bz = lerp(sh.cz, sh.lz, shotT);
+    // ── Ball position ──────────────────────────────────────────────────────
+    // Smooth S-curve for horizontal motion (not linear)
+    const horzT = shotT < 0.5
+      ? 4 * shotT * shotT * shotT
+      : 1 - Math.pow(-2 * shotT + 2, 3) / 2;
+
+    const bx  = lerp(sh.cx, sh.lx, horzT);
+    const bz  = lerp(sh.cz, sh.lz, horzT);
     const arcH = Math.hypot(sh.lx - sh.cx, sh.lz - sh.cz) * sh.spec.arc;
-    const by   = Math.max(0.07,
+    // Arc: rises then drops; lands at ~0.12m height (after bounce)
+    const by  = Math.max(0.07,
       lerp(sh.cy, 0.12, shotT) + arcH * Math.sin(shotT * Math.PI)
     );
 
-    // Speed profile (fast off racket, decelerates)
-    const decel = Math.pow(1 - shotT, 0.55);
-    const spd = sh.speed * (0.22 + 0.78 * decel);
+    // ── Ball speed display ─────────────────────────────────────────────────
+    const decel = Math.pow(clamp(1 - shotT, 0, 1), 0.5);
+    const spd   = sh.speed * (0.20 + 0.80 * decel);
 
-    // Players sprint toward landing in receiver's half
-    const recvT = clamp(shotT * 1.6, 0, 1);
-    let p1x = pos.p1.x, p1z = pos.p1.z;
-    let p2x = pos.p2.x, p2z = pos.p2.z;
+    // ── Player target positions ────────────────────────────────────────────
+    // Hitter: recover to their baseline after hitting
+    // Receiver: sprint toward landing after reaction delay
+
+    const reactionT = clamp((fi - sh.startFrame - REACTION_FRAMES) / (sh.nFrames - REACTION_FRAMES), 0, 1);
+    const sprintFrac = easeOut(reactionT);
+
+    // Hitter recovers toward their baseline centre
+    const p1BaseX = 0, p1BaseZ = HL  * 0.905;
+    const p2BaseX = 0, p2BaseZ = -HL * 0.905;
+
+    let targetP1x, targetP1z, targetP2x, targetP2z;
 
     if (sh.hitter === 'p1') {
+      // Djokovic (p1) just hit — recover toward centre baseline
+      targetP1x = lerp(sh.cx, p1BaseX, easeOut(shotT * 1.4));
+      targetP1z = lerp(sh.cz, p1BaseZ, easeOut(shotT * 1.4));
       // Nadal (p2) sprints toward landing
-      p2x = lerp(pos.p2.x, clamp(sh.lx, -HW + 0.4, HW - 0.4), easeInOut(recvT));
-      p2z = lerp(pos.p2.z, clamp(sh.lz, -HL + 0.3, -0.4), easeInOut(recvT));
+      targetP2x = lerp(p2BaseX, clamp(sh.lx, -HW + 0.4, HW - 0.4), sprintFrac);
+      targetP2z = lerp(p2BaseZ, clamp(sh.lz, -HL + 0.3, -1.0), sprintFrac);
     } else {
-      // Djokovic (p1) sprints toward landing
-      p1x = lerp(pos.p1.x, clamp(sh.lx, -HW + 0.4, HW - 0.4), easeInOut(recvT));
-      p1z = lerp(pos.p1.z, clamp(sh.lz, 0.4, HL - 0.3), easeInOut(recvT));
+      // Nadal (p2) just hit — recover
+      targetP2x = lerp(sh.cx, p2BaseX, easeOut(shotT * 1.4));
+      targetP2z = lerp(sh.cz, p2BaseZ, easeOut(shotT * 1.4));
+      // Djokovic (p1) sprints
+      targetP1x = lerp(p1BaseX, clamp(sh.lx, -HW + 0.4, HW - 0.4), sprintFrac);
+      targetP1z = lerp(p1BaseZ, clamp(sh.lz, 1.0, HL - 0.3), sprintFrac);
     }
+
+    // Velocity-cap: player can only move MAX_PLAYER_SPEED per frame
+    p1x = moveToward(p1x, targetP1x, MAX_PLAYER_SPEED);
+    p1z = moveToward(p1z, targetP1z, MAX_PLAYER_SPEED);
+    p2x = moveToward(p2x, targetP2x, MAX_PLAYER_SPEED);
+    p2z = moveToward(p2z, targetP2z, MAX_PLAYER_SPEED);
+
+    // Keep players in their halves
+    p1z = clamp(p1z,  0.5, HL  - 0.2);
+    p2z = clamp(p2z, -HL + 0.2, -0.5);
+    p1x = clamp(p1x, -HW + 0.3, HW - 0.3);
+    p2x = clamp(p2x, -HW + 0.3, HW - 0.3);
+
+    prevBx = bx; prevBy = by; prevBz = bz;
 
     sequence.push({
       frame_index: fi,
@@ -190,30 +199,58 @@ function generateRally(rng, duration, playerTimeline) {
         { id: 'player_top',    position: { x: r3(p2x), y: 0, z: r3(p2z) } },
       ],
       ball_speed_kmh: r3(spd),
-      spin_rate_rpm: sh.spin,
-      hitter: shotT < 0.06 ? sh.hitter : null,
+      spin_rate_rpm:  sh.spin,
+      hitter: shotT < 0.05 ? sh.hitter : null,
     });
   }
 
   return sequence;
 }
 
-// ── Main ───────────────────────────────────────────────────────────────────────
-const rng = mkRng(6963094); // seed = file size of the Djokovic_Nadal video
-const playerTimeline = makePlayerTimeline(rng, DURATION);
-const sequence = generateRally(rng, DURATION, playerTimeline);
+// ── Gaussian smoothing (3-tap, applied to ball and player coords) ───────────
+function gaussSmooth(seq, sigma = 0.5) {
+  // 3-tap weights for sigma≈0.5: [0.27, 0.46, 0.27]
+  const w = [0.27, 0.46, 0.27];
+  return seq.map((f, i) => {
+    const a = seq[Math.max(0, i - 1)];
+    const b = f;
+    const c = seq[Math.min(seq.length - 1, i + 1)];
 
-const output = { sequence };
-writeFileSync('frontend/public/demo_data.json', JSON.stringify(output));
+    const smBx = a.ball.position.x * w[0] + b.ball.position.x * w[1] + c.ball.position.x * w[2];
+    const smBy = a.ball.position.y * w[0] + b.ball.position.y * w[1] + c.ball.position.y * w[2];
+    const smBz = a.ball.position.z * w[0] + b.ball.position.z * w[1] + c.ball.position.z * w[2];
 
-console.log(`✅ Generated demo_data.json`);
-console.log(`   Frames:   ${sequence.length} (${DURATION}s @ ${FPS}fps)`);
-console.log(`   File size: ${(JSON.stringify(output).length / 1024).toFixed(1)} KB`);
+    const smP1x = a.players[0].position.x * w[0] + b.players[0].position.x * w[1] + c.players[0].position.x * w[2];
+    const smP1z = a.players[0].position.z * w[0] + b.players[0].position.z * w[1] + c.players[0].position.z * w[2];
+    const smP2x = a.players[1].position.x * w[0] + b.players[1].position.x * w[1] + c.players[1].position.x * w[2];
+    const smP2z = a.players[1].position.z * w[0] + b.players[1].position.z * w[1] + c.players[1].position.z * w[2];
 
-// Quick stats
-const speeds = sequence.map(f => f.ball_speed_kmh).filter(s => s > 20);
+    return {
+      ...f,
+      ball: { ...f.ball, position: { x: r3(smBx), y: r3(Math.max(0.07, smBy)), z: r3(smBz) } },
+      players: [
+        { id: 'player_bottom', position: { x: r3(smP1x), y: 0, z: r3(f.players[0].position.z) } },
+        { id: 'player_top',    position: { x: r3(smP2x), y: 0, z: r3(f.players[1].position.z) } },
+      ],
+    };
+  });
+}
+
+// ── Run ──────────────────────────────────────────────────────────────────────
+console.log('Generating Djokovic vs Nadal rally...');
+const raw = generateRally();
+const smoothed = gaussSmooth(gaussSmooth(raw)); // two passes
+
+const output = JSON.stringify({ sequence: smoothed });
+writeFileSync('frontend/public/demo_data.json', output);
+
+const speeds = smoothed.map(f => f.ball_speed_kmh).filter(s => s > 20);
+const hits   = smoothed.filter(f => f.hitter).length;
 const maxSpd = Math.max(...speeds).toFixed(0);
 const avgSpd = (speeds.reduce((a, b) => a + b, 0) / speeds.length).toFixed(0);
-const hits = sequence.filter(f => f.hitter).length;
-console.log(`   Max speed: ${maxSpd} km/h | Avg speed: ${avgSpd} km/h`);
-console.log(`   Total shots: ${hits}`);
+
+console.log(`✅ demo_data.json written`);
+console.log(`   Frames : ${smoothed.length}  (${DURATION}s @ ${FPS}fps)`);
+console.log(`   Shots  : ${hits}`);
+console.log(`   Speed  : avg ${avgSpd} km/h  |  peak ${maxSpd} km/h`);
+console.log(`   Size   : ${(output.length / 1024).toFixed(1)} KB`);

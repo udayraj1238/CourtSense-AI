@@ -56,10 +56,11 @@ export const Player: React.FC<PlayerProps> = React.memo(({
   }), []);
 
   useFrame((state, delta) => {
-    // ── Position lerp (zero-alloc) ────────────────────────────────────
+    // ── Position lerp (smooth glide — factor 5 = reaches target in ~0.6s) ──
     if (groupRef.current) {
       targetVec.current.set(position[0], 0, position[2]);
-      groupRef.current.position.lerp(targetVec.current, Math.min(delta * 10, 1));
+      groupRef.current.position.lerp(targetVec.current, Math.min(delta * 5, 1));
+      groupRef.current.position.y = 0; // keep on court surface
     }
 
     // ── Idle breathing ────────────────────────────────────────────────
