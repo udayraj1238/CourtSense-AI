@@ -38,12 +38,23 @@ class JobManager:
                     error TEXT,
                     calibration_failed INTEGER NOT NULL DEFAULT 0,
                     upload_path TEXT,
+                    homography_json TEXT,
+                    preview_path TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            await self._migrate_columns(db)
             await db.commit()
+
+    async def _migrate_columns(self, db: aiosqlite.Connection) -> None:
+        async with db.execute("PRAGMA table_info(jobs)") as cursor:
+            cols = {row[1] for row in await cursor.fetchall()}
+        if "homography_json" not in cols:
+            await db.execute("ALTER TABLE jobs ADD COLUMN homography_json TEXT")
+        if "preview_path" not in cols:
+            await db.execute("ALTER TABLE jobs ADD COLUMN preview_path TEXT")
 
     async def start_cleanup_loop(self) -> None:
         if self._cleanup_task is None:
@@ -120,14 +131,31 @@ class JobManager:
         self,
         job_id: str,
         processor: Callable[[str, ProgressCallback], Awaitable[None]],
+        *,
+        skip_if_completed: bool = False,
     ) -> None:
         if job_id in self._running_jobs:
             return
+
+        if skip_if_completed:
+            job = await self.get_job(job_id)
+            if job and job.get("status") == "completed":
+                return
+
         self._running_jobs.add(job_id)
 
         async def _run() -> None:
             try:
-                await self.update_job(job_id, status="processing", progress=0, stage="ingest")
+                job = await self.get_job(job_id)
+                if job and job.get("homography_json") and job.get("status") == "calibration_required":
+                    await self.update_job(
+                        job_id,
+                        status="processing",
+                        calibration_failed=0,
+                        error=None,
+                    )
+                elif not job or job.get("status") not in ("processing",):
+                    await self.update_job(job_id, status="processing", progress=0, stage="ingest")
 
                 async def on_progress(
                     stage: str,

@@ -1,5 +1,4 @@
 import type {
-  JobStatusResponse,
   JobUploadResponse,
   SequenceResponse,
 } from '../types/tracking';
@@ -23,13 +22,13 @@ export async function uploadVideo(file: File): Promise<JobUploadResponse> {
   return res.json() as Promise<JobUploadResponse>;
 }
 
-export async function fetchJobStatus(jobId: string): Promise<JobStatusResponse> {
+export async function fetchJobStatus(jobId: string) {
   const base = getApiBaseUrl();
   const res = await fetch(`${base}/api/v2/jobs/${jobId}/status`);
   if (!res.ok) {
     throw new Error(`Status check failed (${res.status})`);
   }
-  return res.json() as Promise<JobStatusResponse>;
+  return res.json();
 }
 
 export async function fetchJobResult(jobId: string): Promise<SequenceResponse> {
@@ -46,6 +45,26 @@ export async function fetchJobResult(jobId: string): Promise<SequenceResponse> {
   }
 
   return res.json() as Promise<SequenceResponse>;
+}
+
+export function getJobPreviewUrl(jobId: string): string {
+  return `${getApiBaseUrl()}/api/v2/jobs/${jobId}/preview`;
+}
+
+export async function submitCalibration(
+  jobId: string,
+  corners: [number, number][],
+): Promise<void> {
+  const base = getApiBaseUrl();
+  const res = await fetch(`${base}/api/v2/jobs/${jobId}/calibrate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ corners }),
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(detail || `Calibration failed (${res.status})`);
+  }
 }
 
 export async function checkBackendHealth(): Promise<boolean> {

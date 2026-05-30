@@ -3,12 +3,16 @@ import tempfile
 import uuid
 from pathlib import Path
 
+import numpy as np
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from backend.config import get_settings
-from backend.models.api import JobStatusResponse, JobUploadResponse, SequenceResponse
-from backend.pipeline.orchestrator import run_stub_pipeline
+from backend.cv.errors import CalibrationError
+from backend.cv.homography import CourtProjector
+from backend.models.api import JobStatusResponse, JobUploadResponse, ManualCalibrateRequest, SequenceResponse
+from backend.pipeline.orchestrator import run_pipeline
+from backend.pipeline.stages.calibration import calibrate_job
 from backend.services import storage
 from backend.services.job_manager import get_job_manager
 
@@ -41,7 +45,7 @@ async def upload_video(file: UploadFile = File(...)):
 
     job_manager = get_job_manager()
     await job_manager.create_job(job_id, dest)
-    await job_manager.enqueue_processing(job_id, run_stub_pipeline)
+    await job_manager.enqueue_processing(job_id, run_pipeline)
 
     return JobUploadResponse(job_id=job_id)
 
@@ -65,6 +69,55 @@ async def job_status(job_id: str):
     )
 
 
+@router.get("/{job_id}/preview")
+async def job_preview(job_id: str):
+    job = await get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    preview = job.get("preview_path")
+    if not preview or not Path(preview).exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Preview frame not available yet. Wait for calibration stage.",
+        )
+
+    return FileResponse(preview, media_type="image/jpeg", filename=f"{job_id}_preview.jpg")
+
+
+@router.post("/{job_id}/calibrate")
+async def manual_calibrate(job_id: str, body: ManualCalibrateRequest):
+    job = await get_job_manager().get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    if job["status"] not in ("calibration_required", "failed"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job cannot be calibrated in status '{job['status']}'.",
+        )
+
+    try:
+        corners = np.array(body.corners, dtype=np.float32).reshape(4, 2)
+        projector = CourtProjector.from_corners(corners)
+        h_json = projector.to_json()
+    except CalibrationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await get_job_manager().update_job(
+        job_id,
+        homography_json=h_json,
+        calibration_failed=0,
+        error=None,
+        status="queued",
+        progress=15,
+        stage="calibration",
+    )
+    await get_job_manager().enqueue_processing(job_id, run_pipeline)
+
+    return {"job_id": job_id, "status": "processing", "message": "Manual calibration accepted."}
+
+
 @router.get("/{job_id}/result")
 async def job_result(job_id: str):
     job = await get_job_manager().get_job(job_id)
@@ -72,7 +125,7 @@ async def job_result(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found.")
 
     status = job["status"]
-    if status == "processing" or status == "queued":
+    if status in ("processing", "queued"):
         return JSONResponse(
             status_code=202,
             content={"status": status, "progress": job["progress"]},
@@ -98,9 +151,3 @@ async def job_result(job_id: str):
         raise HTTPException(status_code=404, detail="Result not found.")
 
     return SequenceResponse(**payload)
-
-
-@router.post("/{job_id}/calibrate", status_code=501)
-async def manual_calibrate(job_id: str):
-    """Placeholder — implemented in Milestone 2."""
-    raise HTTPException(status_code=501, detail="Manual calibration not yet implemented.")

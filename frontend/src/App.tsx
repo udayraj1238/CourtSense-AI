@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { TennisScene } from './components/TennisScene';
+import { CalibrationOverlay } from './components/CalibrationOverlay';
 import { ToastContainer, useToast } from './components/Toast';
 import { AnalyticsSidebar } from './components/AnalyticsSidebar';
 import { HeatmapOverlay } from './components/HeatmapOverlay';
 import { processVideoFile } from './utils/videoProcessor';
-import { uploadVideo } from './utils/apiClient';
-import { pollJobUntilComplete } from './utils/jobPoller';
+import { uploadVideo, getJobPreviewUrl, submitCalibration } from './utils/apiClient';
+import { pollJobUntilComplete, CalibrationNeededError } from './utils/jobPoller';
 import {
   isServerProcessingEnabled,
   type ProcFrameData,
@@ -79,6 +80,8 @@ function App() {
   // Client-side processing progress
   const [processingLabel, setProcessingLabel] = useState('');
   const [processingPct, setProcessingPct] = useState(0);
+  const [calibrationJobId, setCalibrationJobId] = useState<string | null>(null);
+  const [calibrationSubmitting, setCalibrationSubmitting] = useState(false);
 
   const frameRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -144,6 +147,50 @@ function App() {
       });
   }, [updatePositions, addToast]);
 
+  const applySequence = useCallback((sequence: FrameData[], toastMsg: string) => {
+    setSequenceData(sequence);
+    if (sequence.length > 0) updatePositions(sequence[0]);
+    setAppState('ready');
+    setIsPlaying(true);
+    addToast(toastMsg, 'success');
+  }, [updatePositions, addToast]);
+
+  const pollServerJob = useCallback(async (jobId: string) => {
+    return pollJobUntilComplete(jobId, (label, pct, status) => {
+      setProcessingLabel(label);
+      setProcessingPct(pct);
+      const stepIdx = Math.min(Math.floor(pct / 20), PROCESSING_STEPS.length - 1);
+      setProcessingStep(stepIdx);
+      if (status.stage === 'calibration') setProcessingStep(1);
+    });
+  }, []);
+
+  const handleCalibrationSubmit = useCallback(async (corners: [number, number][]) => {
+    if (!calibrationJobId) return;
+    const jobId = calibrationJobId;
+    setCalibrationSubmitting(true);
+    setAppState('processing');
+    setProcessingLabel('Applying calibration…');
+    try {
+      await submitCalibration(jobId, corners);
+      setCalibrationJobId(null);
+      const result = await pollServerJob(jobId);
+      applySequence(result.sequence, `Server analysis complete — ${result.sequence.length} frames!`);
+    } catch (err) {
+      if (err instanceof CalibrationNeededError) {
+        setCalibrationJobId(err.jobId);
+        setAppState('idle');
+        addToast('Calibration still required — please check corner order.', 'warning');
+      } else {
+        setCalibrationJobId(null);
+        setAppState('idle');
+        addToast(`Calibration failed: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error', 8000);
+      }
+    } finally {
+      setCalibrationSubmitting(false);
+    }
+  }, [calibrationJobId, pollServerJob, applySequence, addToast]);
+
   /* --- Video upload: V5 server (when VITE_API_URL set) or V4 browser --- */
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
@@ -162,23 +209,21 @@ function App() {
     setBallTrail([]);
     setHeatmapData([]);
     try {
-      let sequence: FrameData[];
-
       if (isServerProcessingEnabled()) {
         setProcessingLabel('Uploading to server…');
         const { job_id } = await uploadVideo(file);
-        const result = await pollJobUntilComplete(job_id, (label, pct, status) => {
-          setProcessingLabel(label);
-          setProcessingPct(pct);
-          const stepIdx = Math.min(
-            Math.floor(pct / 20),
-            PROCESSING_STEPS.length - 1,
-          );
-          setProcessingStep(stepIdx);
-          if (status.stage === 'calibration') setProcessingStep(1);
-        });
-        sequence = result.sequence;
-        addToast(`Server analysis complete — ${sequence.length} frames!`, 'success');
+        try {
+          const result = await pollServerJob(job_id);
+          applySequence(result.sequence, `Server analysis complete — ${result.sequence.length} frames!`);
+        } catch (err) {
+          if (err instanceof CalibrationNeededError) {
+            setCalibrationJobId(err.jobId);
+            setAppState('idle');
+            addToast('Auto court detection failed — mark 4 corners to continue.', 'warning', 6000);
+            return;
+          }
+          throw err;
+        }
       } else {
         const result = await processVideoFile(file, (step, pct) => {
           setProcessingLabel(step);
@@ -186,21 +231,15 @@ function App() {
           const stepIdx = Math.min(Math.floor(pct / 20), PROCESSING_STEPS.length - 1);
           setProcessingStep(stepIdx);
         });
-        sequence = result.sequence as FrameData[];
-        addToast(`Analysis complete — ${sequence.length} frames tracked!`, 'success');
+        applySequence(result.sequence as FrameData[], `Analysis complete — ${result.sequence.length} frames tracked!`);
       }
-
-      setSequenceData(sequence);
-      if (sequence.length > 0) updatePositions(sequence[0]);
-      setAppState('ready');
-      setIsPlaying(true);
     } catch (err) {
       console.error('Processing error:', err);
       setAppState('idle');
       addToast(`Processing failed: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error', 8000);
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
-  }, [addToast, updatePositions]);
+  }, [addToast, applySequence, pollServerJob]);
 
   /* --- Drag and Drop --- */
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); }, []);
@@ -469,6 +508,15 @@ function App() {
             </div>
           )}
         </div>
+
+        {calibrationJobId && (
+          <CalibrationOverlay
+            previewUrl={getJobPreviewUrl(calibrationJobId)}
+            onSubmit={handleCalibrationSubmit}
+            onCancel={() => { setCalibrationJobId(null); setAppState('idle'); }}
+            isSubmitting={calibrationSubmitting}
+          />
+        )}
 
         <ToastContainer toasts={toasts} onDismiss={dismiss} />
       </div>
