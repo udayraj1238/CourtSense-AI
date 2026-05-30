@@ -44,9 +44,11 @@ data/output/
 # Logs
 *.log
 
-# Environment
-.env
-.env.local
+# Backend runtime data (Milestone 1+)
+backend/data/uploads/
+backend/data/results/
+backend/data/jobs.db
+!backend/data/.gitkeep
 
 # Gemini/Agent artifacts
 .gemini/

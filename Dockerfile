@@ -9,13 +9,15 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Install Python dependencies
-COPY requirements.txt .
+COPY requirements.txt requirements/
+COPY requirements/ requirements/
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
 COPY courtsense_ai/ courtsense_ai/
 COPY scripts/ scripts/
 COPY backend/ backend/
+COPY frontend/public/demo_data.json frontend/public/demo_data.json
 COPY data/ data/
 
 # Hugging Face Spaces expose port 7860 by default

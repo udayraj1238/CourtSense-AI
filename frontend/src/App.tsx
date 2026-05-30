@@ -4,6 +4,13 @@ import { ToastContainer, useToast } from './components/Toast';
 import { AnalyticsSidebar } from './components/AnalyticsSidebar';
 import { HeatmapOverlay } from './components/HeatmapOverlay';
 import { processVideoFile } from './utils/videoProcessor';
+import { uploadVideo } from './utils/apiClient';
+import { pollJobUntilComplete } from './utils/jobPoller';
+import {
+  isServerProcessingEnabled,
+  type ProcFrameData,
+  type SequenceResponse,
+} from './types/tracking';
 import {
   Play, Pause, RotateCcw, Upload, Zap, Eye, Target,
   ChevronLeft, ChevronRight, Video, Map,
@@ -11,18 +18,7 @@ import {
 import './index.css';
 import './App.css';
 
-interface Coordinate { x: number; y: number; z: number; }
-interface PlayerState { id: string; position: Coordinate; }
-interface BallState { position: Coordinate; is_occluded: boolean; }
-interface FrameData {
-  frame_index: number;
-  ball: BallState | null;
-  players: PlayerState[];
-  ball_speed_kmh?: number;
-  spin_rate_rpm?: number;
-  hitter?: 'p1' | 'p2' | null;
-}
-interface SequenceResponse { sequence: FrameData[]; }
+type FrameData = ProcFrameData;
 
 const TRAIL_LENGTH = 24;
 const SPEED_OPTIONS = [0.25, 0.5, 1, 2];
@@ -110,8 +106,8 @@ function App() {
     let newP2: [number,number,number] | null = null;
     for (const player of fd.players) {
       const pos: [number, number, number] = [player.position.x, player.position.y, player.position.z];
-      if (player.id.includes('top')) newP1 = pos;
-      else if (player.id.includes('bottom')) newP2 = pos;
+      if (player.id.includes('bottom')) newP1 = pos;
+      else if (player.id.includes('top')) newP2 = pos;
     }
     if (newP1) setP1Pos(newP1);
     if (newP2) setP2Pos(newP2);
@@ -148,7 +144,7 @@ function App() {
       });
   }, [updatePositions, addToast]);
 
-  /* --- Client-side video processing --- */
+  /* --- Video upload: V5 server (when VITE_API_URL set) or V4 browser --- */
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     const file = e.target.files[0];
@@ -166,18 +162,38 @@ function App() {
     setBallTrail([]);
     setHeatmapData([]);
     try {
-      const result = await processVideoFile(file, (step, pct) => {
-        setProcessingLabel(step);
-        setProcessingPct(pct);
-        // Advance processing step indicator based on pct
-        const stepIdx = Math.min(Math.floor(pct / 20), PROCESSING_STEPS.length - 1);
-        setProcessingStep(stepIdx);
-      });
-      setSequenceData(result.sequence as FrameData[]);
-      if (result.sequence.length > 0) updatePositions(result.sequence[0] as FrameData);
+      let sequence: FrameData[];
+
+      if (isServerProcessingEnabled()) {
+        setProcessingLabel('Uploading to server…');
+        const { job_id } = await uploadVideo(file);
+        const result = await pollJobUntilComplete(job_id, (label, pct, status) => {
+          setProcessingLabel(label);
+          setProcessingPct(pct);
+          const stepIdx = Math.min(
+            Math.floor(pct / 20),
+            PROCESSING_STEPS.length - 1,
+          );
+          setProcessingStep(stepIdx);
+          if (status.stage === 'calibration') setProcessingStep(1);
+        });
+        sequence = result.sequence;
+        addToast(`Server analysis complete — ${sequence.length} frames!`, 'success');
+      } else {
+        const result = await processVideoFile(file, (step, pct) => {
+          setProcessingLabel(step);
+          setProcessingPct(pct);
+          const stepIdx = Math.min(Math.floor(pct / 20), PROCESSING_STEPS.length - 1);
+          setProcessingStep(stepIdx);
+        });
+        sequence = result.sequence as FrameData[];
+        addToast(`Analysis complete — ${sequence.length} frames tracked!`, 'success');
+      }
+
+      setSequenceData(sequence);
+      if (sequence.length > 0) updatePositions(sequence[0]);
       setAppState('ready');
       setIsPlaying(true);
-      addToast(`Analysis complete — ${result.sequence.length} frames tracked!`, 'success');
     } catch (err) {
       console.error('Processing error:', err);
       setAppState('idle');

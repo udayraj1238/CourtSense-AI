@@ -15,17 +15,10 @@
  */
 
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
+import type { ProcFrameData } from '../types/tracking';
 
+export type { ProcFrameData } from '../types/tracking';
 export type ProgressCb = (step: string, pct: number) => void;
-
-export interface ProcFrameData {
-  frame_index: number;
-  ball: { position: { x: number; y: number; z: number }; is_occluded: boolean };
-  players: { id: string; position: { x: number; y: number; z: number } }[];
-  ball_speed_kmh: number;
-  spin_rate_rpm: number;
-  hitter: 'p1' | 'p2' | null;
-}
 
 const HW = 4.115;
 const HL = 11.885;
