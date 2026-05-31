@@ -20,9 +20,9 @@ def detect_bounces(positions: List[Dict[str, float]], fps: float = 30.0) -> List
     for i in range(2, len(positions) - 2):
         if positions[i]["is_occluded"]: continue
         
-        z_prev = positions[i-1]["z"]
-        z_curr = positions[i]["z"]
-        z_next = positions[i+1]["z"]
+        z_prev = positions[i-1]["position"]["z"]
+        z_curr = positions[i]["position"]["z"]
+        z_next = positions[i+1]["position"]["z"]
         
         vz_before = (z_curr - z_prev) * fps
         vz_after = (z_next - z_curr) * fps
@@ -47,7 +47,7 @@ def estimate_heights(positions: List[Dict[str, Any]], bounces: List[int]) -> Non
             # Parabola peaking in the middle
             t = i / len(positions)
             y = 1.0 - 4.0 * 0.92 * ((t - 0.5) ** 2)
-            pos["y"] = max(0.08, y)
+            positions[i]["position"]["y"] = max(0.08, y)
         return
         
     # We have bounces.
@@ -59,8 +59,8 @@ def estimate_heights(positions: List[Dict[str, Any]], bounces: List[int]) -> Non
             for i in range(last_idx, bounce_idx):
                 t = (i - last_idx) / length
                 y = 1.0 - (1.0 - 0.08) * (t ** 2) # Half parabola down
-                positions[i]["y"] = max(0.08, y)
-        positions[bounce_idx]["y"] = 0.08
+                positions[i]["position"]["y"] = max(0.08, y)
+        positions[bounce_idx]["position"]["y"] = 0.08
         last_idx = bounce_idx
         
     # Arc from last bounce to end
@@ -69,7 +69,7 @@ def estimate_heights(positions: List[Dict[str, Any]], bounces: List[int]) -> Non
         for i in range(last_idx + 1, len(positions)):
             t = (i - last_idx) / length
             y = 0.08 + (1.0 - 0.08) * (t ** 2) # Half parabola up
-            positions[i]["y"] = max(0.08, y)
+            positions[i]["position"]["y"] = max(0.08, y)
 
 
 def process_ball_tracking(video_path: str, projector: CourtProjector, fps: float = 30.0, progress_callback=None) -> List[Dict[str, Any]]:
@@ -102,9 +102,11 @@ def process_ball_tracking(video_path: str, projector: CourtProjector, fps: float
                 pred_x, pred_y, pred_z = kf.correct(x, pred_y, z) # Trust prediction for Y right now
                 
             raw_positions.append({
-                "x": float(pred_x),
-                "y": float(pred_y),
-                "z": float(pred_z),
+                "position": {
+                    "x": float(pred_x),
+                    "y": float(pred_y),
+                    "z": float(pred_z)
+                },
                 "is_occluded": False
             })
         else:
@@ -112,17 +114,21 @@ def process_ball_tracking(video_path: str, projector: CourtProjector, fps: float
             if kf.is_initialized:
                 pred_x, pred_y, pred_z = kf.predict()
                 raw_positions.append({
-                    "x": float(pred_x),
-                    "y": float(pred_y),
-                    "z": float(pred_z),
+                    "position": {
+                        "x": float(pred_x),
+                        "y": float(pred_y),
+                        "z": float(pred_z)
+                    },
                     "is_occluded": True
                 })
             else:
                 # Haven't seen the ball yet
                 raw_positions.append({
-                    "x": 0.0,
-                    "y": 1.0,
-                    "z": 0.0,
+                    "position": {
+                        "x": 0.0,
+                        "y": 1.0,
+                        "z": 0.0
+                    },
                     "is_occluded": True
                 })
                 
