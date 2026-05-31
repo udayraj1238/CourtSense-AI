@@ -11,8 +11,8 @@ jobs:
       - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          lfs: true
+          lfs: false
       - name: Push to hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git push --force https://rajuday6002:$HF_TOKEN@huggingface.co/spaces/rajuday6002/courtsense-backend main
+        run: git push --force https://rajuday6002:$HF_TOKEN@huggingface.co/spaces/rajuday6002/courtsense-backend HEAD:main

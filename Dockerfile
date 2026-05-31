@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up a non-root user (Hugging Face Spaces requirement)
-RUN useradd -m -u 1000 user
+RUN useradd -m -u 1000 user || true
 USER user
 ENV PATH="/home/user/.local/bin:$PATH"
 
@@ -16,13 +16,10 @@ WORKDIR /app
 
 # Copy requirements and install them
 COPY --chown=user:user requirements/base.txt requirements/cv.txt requirements/ml-cpu.txt ./requirements/
-RUN pip install --no-cache-dir -r requirements/base.txt -r requirements/cv.txt -r requirements/ml-cpu.txt
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r requirements/base.txt -r requirements/cv.txt -r requirements/ml-cpu.txt
 
 # Copy backend code
 COPY --chown=user:user backend/ ./backend/
-
-# Copy YOLO weights
-COPY --chown=user:user *.pt ./
 
 # Hugging Face exposes port 7860 by default for gradio, but we configure 8000 in README.md
 EXPOSE 8000
