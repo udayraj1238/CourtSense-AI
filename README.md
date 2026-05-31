@@ -1,3 +1,11 @@
+---
+title: CourtSense Backend
+emoji: 🎾
+colorFrom: green
+colorTo: blue
+sdk: docker
+app_port: 8000
+---
 <div align="center">
 
 <!-- Animated Header -->
