@@ -5,7 +5,7 @@ from ultralytics import YOLO
 from backend.cv.homography import CourtProjector
 
 class PoseEstimator:
-    def __init__(self, model_path: str = "yolov8m-pose.pt"):
+    def __init__(self, model_path: str = "yolov8n-pose.pt"):
         # Ultralytics will auto-download the model if it's a standard name like yolov8m-pose.pt
         self.model = YOLO(model_path)
         # COCO pose keypoint indices

@@ -21,6 +21,9 @@ RUN pip install --no-cache-dir -r requirements/base.txt -r requirements/cv.txt -
 # Copy backend code
 COPY --chown=user:user backend/ ./backend/
 
+# Copy YOLO weights
+COPY --chown=user:user *.pt ./
+
 # Hugging Face exposes port 7860 by default for gradio, but we configure 8000 in README.md
 EXPOSE 8000
 
