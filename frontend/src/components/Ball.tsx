@@ -4,9 +4,10 @@ import * as THREE from 'three';
 
 interface BallProps {
   position: [number, number, number];
+  isOccluded?: boolean;
 }
 
-export const Ball: React.FC<BallProps> = React.memo(({ position }) => {
+export const Ball: React.FC<BallProps> = React.memo(({ position, isOccluded = false }) => {
   const ballRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);
@@ -41,7 +42,8 @@ export const Ball: React.FC<BallProps> = React.memo(({ position }) => {
     speedRef.current = speedRef.current * 0.88 + (dist / Math.max(delta, 0.001)) * 0.12;
 
     // Lerp toward target — fast enough to track data, smooth enough to not pop
-    const lerpFactor = Math.min(delta * 18, 1);
+    // Slower follow when occluded (predicted) to avoid sharp snap if backend prediction is slightly off
+    const lerpFactor = Math.min(delta * (isOccluded ? 12 : 18), 1);
     ball.position.lerp(targetVec.current, lerpFactor);
 
     // Visual spin proportional to speed

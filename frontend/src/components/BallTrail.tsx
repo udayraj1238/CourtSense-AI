@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useMemo } from 'react';
 import * as THREE from 'three';
 
 interface BallTrailProps {
-  positions: [number, number, number][];
+  positions: { p: [number, number, number]; occ: boolean }[];
 }
 
 const MAX_TRAIL = 16;
@@ -35,12 +35,19 @@ export const BallTrail: React.FC<BallTrailProps> = React.memo(({ positions }) =>
     const n = pts.length;
     for (let i = 0; i < n; i++) {
       const t = i / Math.max(n - 1, 1); // 0=tail, 1=head
-      posAttr.setXYZ(i, pts[i][0], pts[i][1], pts[i][2]);
-      // Fade from dim green → bright white
-      const r = 0.5 + t * 0.5;
-      const g = 0.85 + t * 0.15;
-      const b = 0.1 + t * 0.9;
-      colorAttr.setXYZ(i, r, g, b);
+      const [px, py, pz] = pts[i].p;
+      posAttr.setXYZ(i, px, py, pz);
+      
+      if (pts[i].occ) {
+        // Occluded: Dim grey/purple, indicating prediction
+        colorAttr.setXYZ(i, 0.4, 0.3, 0.5);
+      } else {
+        // Real detection: Fade from dim green → bright white
+        const r = 0.5 + t * 0.5;
+        const g = 0.85 + t * 0.15;
+        const b = 0.1 + t * 0.9;
+        colorAttr.setXYZ(i, r, g, b);
+      }
     }
     posAttr.needsUpdate = true;
     colorAttr.needsUpdate = true;

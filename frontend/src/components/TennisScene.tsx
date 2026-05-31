@@ -11,9 +11,10 @@ import * as THREE from 'three';
 
 interface TennisSceneProps {
   ballPos: [number, number, number];
+  ballOccluded?: boolean;
   player1Pos: [number, number, number];
   player2Pos: [number, number, number];
-  ballTrail?: [number, number, number][];
+  ballTrail?: { p: [number, number, number]; occ: boolean }[];
   cameraPreset?: 'default' | 'overhead' | 'p1' | 'p2';
   p1Hitting?: boolean;
   p2Hitting?: boolean;
@@ -46,6 +47,7 @@ function CameraController({ preset }: { preset: string }) {
 
 export const TennisScene: React.FC<TennisSceneProps> = React.memo(({
   ballPos,
+  ballOccluded = false,
   player1Pos,
   player2Pos,
   ballTrail = [],
@@ -122,7 +124,7 @@ export const TennisScene: React.FC<TennisSceneProps> = React.memo(({
         {ballTrail.length > 1 && <BallTrail positions={ballTrail} />}
 
         {/* Ball */}
-        <Ball position={ballPos} />
+        <Ball position={ballPos} isOccluded={ballOccluded} />
 
         {/* Players */}
         <Player position={player1Pos} color="#4f9aff" accentColor="#1e3a6e" side="bottom" label="Player 1" isHitting={p1Hitting} />

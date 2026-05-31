@@ -12,6 +12,7 @@ import {
   type ProcFrameData,
   type SequenceResponse,
 } from './types/tracking';
+import { smoothSequence } from './utils/sequenceSmoother';
 import {
   Play, Pause, RotateCcw, Upload, Zap, Eye, Target,
   ChevronLeft, ChevronRight, Video, Map,
@@ -64,14 +65,16 @@ function App() {
   const [cameraPreset, setCameraPreset] = useState<'default' | 'overhead' | 'p1' | 'p2'>('default');
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [processingStep, setProcessingStep] = useState(0);
+  const [useServerAnalysis, setUseServerAnalysis] = useState(isServerProcessingEnabled());
 
 
   const [ballPos, setBallPos] = useState<[number, number, number]>([0, 1, 0]);
+  const [ballOccluded, setBallOccluded] = useState(false);
   const [p1Pos, setP1Pos] = useState<[number, number, number]>([0, 0, 10]);
   const [p2Pos, setP2Pos] = useState<[number, number, number]>([0, 0, -10]);
   const [ballSpeed, setBallSpeed] = useState(0);
   const [spinRate, setSpinRate] = useState(0);
-  const [ballTrail, setBallTrail] = useState<[number, number, number][]>([]);
+  const [ballTrail, setBallTrail] = useState<{p: [number, number, number]; occ: boolean}[]>([]);
   const [heatmapData, setHeatmapData] = useState<[number, number][]>([]);
   const [p1Hitting, setP1Hitting] = useState(false);
   const [p2Hitting, setP2Hitting] = useState(false);
@@ -85,7 +88,7 @@ function App() {
 
   const frameRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const trailRef = useRef<[number, number, number][]>([]);
+  const trailRef = useRef<{p: [number, number, number]; occ: boolean}[]>([]);
   const heatRef = useRef<[number, number][]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -98,7 +101,8 @@ function App() {
     if (fd.ball) {
       const np: [number, number, number] = [fd.ball.position.x, fd.ball.position.y, fd.ball.position.z];
       setBallPos(np);
-      trailRef.current = [...trailRef.current.slice(-15), np];
+      setBallOccluded(fd.ball.is_occluded);
+      trailRef.current = [...trailRef.current.slice(-15), { p: np, occ: fd.ball.is_occluded }];
       setBallTrail(trailRef.current.slice());
       if (heatRef.current.length === 0 || Math.random() > 0.67) {
         heatRef.current = [...heatRef.current, [np[0], np[2]]];
@@ -148,8 +152,9 @@ function App() {
   }, [updatePositions, addToast]);
 
   const applySequence = useCallback((sequence: FrameData[], toastMsg: string) => {
-    setSequenceData(sequence);
-    if (sequence.length > 0) updatePositions(sequence[0]);
+    const smoothed = smoothSequence(sequence);
+    setSequenceData(smoothed);
+    if (smoothed.length > 0) updatePositions(smoothed[0]);
     setAppState('ready');
     setIsPlaying(true);
     addToast(toastMsg, 'success');
@@ -209,7 +214,7 @@ function App() {
     setBallTrail([]);
     setHeatmapData([]);
     try {
-      if (isServerProcessingEnabled()) {
+      if (useServerAnalysis) {
         setProcessingLabel('Uploading to server…');
         const { job_id } = await uploadVideo(file);
         try {
@@ -309,8 +314,11 @@ function App() {
     const c = Math.max(0, Math.min(target, sequenceData.length - 1));
     frameRef.current = c; setFrame(c);
     const start = Math.max(0, c - TRAIL_LENGTH);
-    const trail: [number, number, number][] = [];
-    for (let i = start; i <= c; i++) { const fd = sequenceData[i]; if (fd.ball) trail.push([fd.ball.position.x, fd.ball.position.y, fd.ball.position.z]); }
+    const trail: {p: [number, number, number]; occ: boolean}[] = [];
+    for (let i = start; i <= c; i++) { 
+      const fd = sequenceData[i]; 
+      if (fd.ball) trail.push({ p: [fd.ball.position.x, fd.ball.position.y, fd.ball.position.z], occ: fd.ball.is_occluded }); 
+    }
     trailRef.current = trail; setBallTrail([...trail]);
     updatePositions(sequenceData[c]);
   };
@@ -406,6 +414,26 @@ function App() {
 
           {appState === 'idle' && (
             <div className="animate-in-delayed-3" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {/* Dual Mode Toggle */}
+              {isServerProcessingEnabled() && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginTop: '-4px', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '11px', color: !useServerAnalysis ? 'var(--accent)' : 'var(--text-muted)', fontWeight: !useServerAnalysis ? 700 : 400 }}>V4 Quick Preview</span>
+                  <button 
+                    onClick={() => setUseServerAnalysis(u => !u)}
+                    style={{
+                      width: '36px', height: '20px', borderRadius: '10px', background: useServerAnalysis ? 'var(--accent)' : 'var(--surface-light)',
+                      position: 'relative', border: 'none', cursor: 'pointer', transition: 'all 0.2s'
+                    }}
+                  >
+                    <div style={{
+                      position: 'absolute', top: '2px', left: useServerAnalysis ? '18px' : '2px',
+                      width: '16px', height: '16px', borderRadius: '50%', background: '#000', transition: 'all 0.2s'
+                    }} />
+                  </button>
+                  <span style={{ fontSize: '11px', color: useServerAnalysis ? 'var(--accent)' : 'var(--text-muted)', fontWeight: useServerAnalysis ? 700 : 400 }}>V5 Server Analysis</span>
+                </div>
+              )}
+
               <input type="file" accept="video/mp4,video/quicktime,video/webm" ref={fileInputRef} onChange={handleFileUpload} style={{ display: 'none' }} />
 
               {/* Upload button */}
@@ -414,7 +442,9 @@ function App() {
                 Select Your Tennis Video
               </button>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.5 }}>
-                ✨ Analysed entirely in your browser — no server, no upload
+                {useServerAnalysis 
+                  ? '✨ Analysed on the powerful Python CV Server' 
+                  : '✨ Analysed entirely in your browser — no server, no upload'}
               </div>
 
               {/* Divider */}
@@ -588,6 +618,7 @@ function App() {
       <main style={{ flex: 1 }}>
         <TennisScene
           ballPos={ballPos}
+          ballOccluded={ballOccluded}
           player1Pos={p1Pos}
           player2Pos={p2Pos}
           ballTrail={ballTrail}
