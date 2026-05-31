@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     cleanup_interval_seconds: int = 300
 
     max_upload_bytes: int = 100 * 1024 * 1024
-    max_video_duration_sec: float = 30.0
+    max_video_duration_sec: float = 120.0
     output_fps: int = 30
 
     stub_demo_json: Path = REPO_ROOT / "frontend" / "public" / "demo_data.json"
