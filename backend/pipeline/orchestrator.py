@@ -11,6 +11,7 @@ from backend.services.job_manager import ProgressCallback, get_job_manager
 from backend.cv.homography import CourtProjector
 from backend.pipeline.stages.player_tracking import process_player_tracking
 from backend.pipeline.stages.ball_tracking import process_ball_tracking
+from backend.pipeline.stages.analytics import calculate_analytics
 
 
 async def run_pipeline(job_id: str, on_progress: ProgressCallback) -> None:
@@ -86,14 +87,16 @@ async def run_pipeline(job_id: str, on_progress: ProgressCallback) -> None:
     # frame_count = min length of the generated sequences (should be equal to frames_total)
     num_frames = min(len(player_states), len(ball_states))
     
+    analytics_data = calculate_analytics(ball_states, player_states, settings.output_fps)
+    
     for i in range(num_frames):
         frame_data = {
             "frame_index": i,
             "ball": ball_states[i],
             "players": player_states[i],
-            "ball_speed_kmh": 0.0, # Placeholder
-            "spin_rate_rpm": 0.0, # Placeholder
-            "hitter": None # Placeholder
+            "ball_speed_kmh": analytics_data[i]["speed_kmh"],
+            "spin_rate_rpm": analytics_data[i]["spin_rpm"],
+            "hitter": analytics_data[i]["hitter"]
         }
         sequence.append(frame_data)
         
