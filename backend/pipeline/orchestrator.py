@@ -63,14 +63,12 @@ async def run_pipeline(job_id: str, on_progress: ProgressCallback) -> None:
 
     # --- Player Tracking (Milestone 3) ---
     def pose_progress(frame_idx, total):
-        pct = int(100 * frame_idx / total)
-        # We need an async closure but progress_callback in process_player_tracking is sync
-        # Since it's a tight loop, we might just not await or we run tracking in thread
-        pass 
+        pct = min(100, max(0, int(100 * frame_idx / max(1, total))))
+        asyncio.run_coroutine_threadsafe(on_progress("player_tracking", pct, overall_progress("player_tracking", pct), total, frame_idx), asyncio.get_running_loop())
         
     # Run heavy CV in thread to not block asyncio loop
     player_states = await asyncio.to_thread(
-        process_player_tracking, str(normalized), projector, settings.output_fps, None
+        process_player_tracking, str(normalized), projector, settings.output_fps, pose_progress
     )
     await on_progress("player_tracking", 100, overall_progress("player_tracking", 100), frames_total, frames_total)
     
