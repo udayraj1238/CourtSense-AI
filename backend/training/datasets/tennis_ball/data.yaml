@@ -1,0 +1,6 @@
+path: ../datasets/tennis_ball
+train: images/train
+val: images/val
+test: images/test
+nc: 1
+names: ['tennis_ball']

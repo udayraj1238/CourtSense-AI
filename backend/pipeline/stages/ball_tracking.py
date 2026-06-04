@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Tuple
 from backend.cv.ball_tracker import BallTracker
 from backend.cv.homography import CourtProjector
 from backend.cv.kalman3d import Kalman3D
+from backend.cv.spline import fill_gaps_with_spline
 
 def detect_bounces(positions: List[Dict[str, float]], fps: float = 30.0) -> List[int]:
     """
@@ -137,6 +138,9 @@ def process_ball_tracking(video_path: str, projector: CourtProjector, fps: float
             progress_callback(frame_idx, total_frames)
             
     cap.release()
+    
+    # 1.5 Spline Gap Fill
+    fill_gaps_with_spline(raw_positions, max_gap=20)
     
     # 2. Bounce Detection & Height Estimation
     bounces = detect_bounces(raw_positions, fps)
