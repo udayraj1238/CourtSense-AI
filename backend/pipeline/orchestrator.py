@@ -63,9 +63,10 @@ async def run_pipeline(job_id: str, on_progress: ProgressCallback) -> None:
     await on_progress("calibration", 100, overall_progress("calibration", 100), frames_total, 0)
 
     # --- Player Tracking (Milestone 3) ---
+    loop = asyncio.get_running_loop()
     def pose_progress(frame_idx, total):
         pct = min(100, max(0, int(100 * frame_idx / max(1, total))))
-        asyncio.run_coroutine_threadsafe(on_progress("player_tracking", pct, overall_progress("player_tracking", pct), total, frame_idx), asyncio.get_running_loop())
+        asyncio.run_coroutine_threadsafe(on_progress("player_tracking", pct, overall_progress("player_tracking", pct), total, frame_idx), loop)
         
     # Run heavy CV in thread to not block asyncio loop
     player_states = await asyncio.to_thread(
