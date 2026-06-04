@@ -25,13 +25,13 @@ def fill_gaps_with_spline(positions: List[Dict[str, Any]], max_gap: int = 20) ->
             ys.append(pos["position"]["y"])
             zs.append(pos["position"]["z"])
             
-    if len(valid_indices) < 2:
+    if len(valid_indices) < 3:
         return
         
     # Fit splines
-    cs_x = CubicSpline(valid_indices, xs, bc_type='natural')
-    cs_y = CubicSpline(valid_indices, ys, bc_type='natural')
-    cs_z = CubicSpline(valid_indices, zs, bc_type='natural')
+    cs_x = CubicSpline(valid_indices, xs)
+    cs_y = CubicSpline(valid_indices, ys)
+    cs_z = CubicSpline(valid_indices, zs)
     
     # Identify gaps and fill them
     current_gap_start = None
