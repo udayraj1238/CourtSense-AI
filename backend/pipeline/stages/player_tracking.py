@@ -6,16 +6,14 @@ from backend.cv.pose_estimator import PoseEstimator
 from backend.cv.homography import CourtProjector
 from backend.cv.smoothing import PointOneEuroFilter
 
+# Only run YOLO inference on every Nth frame for CPU performance.
+# Skipped frames hold the last known detection, which the OneEuro filter smooths.
+SKIP_FRAMES = 3
+
 def process_player_tracking(video_path: str, projector: CourtProjector, fps: float = 30.0, progress_callback=None) -> List[Dict[str, Any]]:
     """
-    Reads the normalized video frame-by-frame, extracts player positions,
-    applies smoothing, and returns a list of player states per frame.
-    
-    Returns a list where each element is a list of player states for that frame.
-    [
-        [{"id": "player_bottom", "position": {"x": 0.0, "y": 0.0, "z": 10.0}}, {"id": "player_top", ...}],
-        ...
-    ]
+    Reads the normalized video, extracts player positions (sampling every SKIP_FRAMES),
+    applies OneEuro smoothing, and returns a list of player states per frame.
     """
     estimator = PoseEstimator()
     
@@ -34,23 +32,24 @@ def process_player_tracking(video_path: str, projector: CourtProjector, fps: flo
         ret, frame = cap.read()
         if not ret:
             break
-            
-        detections = estimator.detect_players(frame, projector)
         
-        # Player Bottom
-        det_b = detections["player_bottom"]
-        if det_b is not None:
-            last_known_bottom = {"x": det_b["x"], "z": det_b["z"]}
-        raw_positions_bottom.append(last_known_bottom)
+        # Only run expensive YOLO inference on sampled frames
+        if frame_idx % SKIP_FRAMES == 0:
+            detections = estimator.detect_players(frame, projector)
             
-        # Player Top
-        det_t = detections["player_top"]
-        if det_t is not None:
-            last_known_top = {"x": det_t["x"], "z": det_t["z"]}
+            det_b = detections["player_bottom"]
+            if det_b is not None:
+                last_known_bottom = {"x": det_b["x"], "z": det_b["z"]}
+                
+            det_t = detections["player_top"]
+            if det_t is not None:
+                last_known_top = {"x": det_t["x"], "z": det_t["z"]}
+        
+        raw_positions_bottom.append(last_known_bottom)
         raw_positions_top.append(last_known_top)
             
         frame_idx += 1
-        if progress_callback and frame_idx % 30 == 0:
+        if progress_callback and frame_idx % 10 == 0:
             progress_callback(frame_idx, total_frames)
             
     cap.release()

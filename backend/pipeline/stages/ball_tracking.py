@@ -73,6 +73,9 @@ def estimate_heights(positions: List[Dict[str, Any]], bounces: List[int]) -> Non
             positions[i]["position"]["y"] = max(0.08, y)
 
 
+# Only run YOLO ball detection on every Nth frame for CPU performance.
+SKIP_FRAMES = 3
+
 def process_ball_tracking(video_path: str, projector: CourtProjector, fps: float = 30.0, progress_callback=None) -> List[Dict[str, Any]]:
     tracker = BallTracker()
     kf = Kalman3D(dt=1.0/fps)
@@ -87,8 +90,11 @@ def process_ball_tracking(video_path: str, projector: CourtProjector, fps: float
         ret, frame = cap.read()
         if not ret:
             break
-            
-        det = tracker.detect_ball(frame, projector)
+        
+        # Only run expensive YOLO inference on sampled frames
+        det = None
+        if frame_idx % SKIP_FRAMES == 0:
+            det = tracker.detect_ball(frame, projector)
         
         if det is not None:
             # We have a detection
@@ -134,7 +140,7 @@ def process_ball_tracking(video_path: str, projector: CourtProjector, fps: float
                 })
                 
         frame_idx += 1
-        if progress_callback and frame_idx % 30 == 0:
+        if progress_callback and frame_idx % 10 == 0:
             progress_callback(frame_idx, total_frames)
             
     cap.release()
