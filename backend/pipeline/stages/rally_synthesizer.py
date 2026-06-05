@@ -251,11 +251,14 @@ def _generate_trajectory(
         bounce_frac = random.uniform(0.55, 0.70)
         bounce_frame = int(arc_frames * bounce_frac)
         
+        # Determine curve magnitude once for the entire shot
+        curve_magnitude = random.uniform(-0.3, 0.3)
+        
         for j in range(arc_frames):
             t = j / arc_frames
             
-            # Lateral and depth: linear interpolation with slight curve
-            curve_offset = math.sin(t * math.pi) * random.uniform(-0.3, 0.3)
+            # Lateral and depth: linear interpolation with smooth curve
+            curve_offset = math.sin(t * math.pi) * curve_magnitude
             x = sx + (ex - sx) * t + curve_offset
             z = sz + (ez - sz) * t
             
