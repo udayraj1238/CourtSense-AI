@@ -15,8 +15,8 @@ export function smoothSequence(raw: ProcFrameData[]): ProcFrameData[] {
   const seq: ProcFrameData[] = JSON.parse(JSON.stringify(raw));
 
   fillBallGaps(seq, 20); // Gap fill up to 20 frames
-  applyEMA(seq, 0.4);    // EMA smoothing with alpha=0.4
-  applyJitterGate(seq, 2.0); // Reject jumps > 2m per frame for players
+  applyEMA(seq, 0.6);    // EMA smoothing with alpha=0.6
+  applyJitterGate(seq, 4.0); // Reject jumps > 4m per frame for players
 
   return seq;
 }
@@ -34,15 +34,23 @@ function fillBallGaps(seq: ProcFrameData[], maxGap: number) {
       const gapLen = gapEnd - gapStart;
 
       if (gapLen > 0 && gapLen <= maxGap) {
-        // Interpolate between gapStart - 1 and gapEnd
-        const startIdx = gapStart > 0 ? gapStart - 1 : gapStart;
-        const startPos = seq[startIdx].ball.position;
-        const endPos = seq[gapEnd].ball.position;
+        if (gapStart === 0) {
+          // No previous frame to interpolate from — just copy the end position
+          const endPos = seq[gapEnd].ball.position;
+          for (let j = gapStart; j < gapEnd; j++) {
+            seq[j].ball.position = { ...endPos };
+          }
+        } else {
+          // Interpolate between gapStart - 1 and gapEnd
+          const startIdx = gapStart - 1;
+          const startPos = seq[startIdx].ball.position;
+          const endPos = seq[gapEnd].ball.position;
 
-        for (let j = gapStart; j < gapEnd; j++) {
-          const t = (j - startIdx) / (gapEnd - startIdx);
-          seq[j].ball.position = lerp3D(startPos, endPos, t);
-          // Keep is_occluded = true so the frontend knows it was predicted
+          for (let j = gapStart; j < gapEnd; j++) {
+            const t = (j - startIdx) / (gapEnd - startIdx);
+            seq[j].ball.position = lerp3D(startPos, endPos, t);
+            // Keep is_occluded = true so the frontend knows it was predicted
+          }
         }
       }
       gapStart = -1;

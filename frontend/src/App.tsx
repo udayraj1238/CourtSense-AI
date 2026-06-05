@@ -5,6 +5,7 @@ import { ToastContainer, useToast } from './components/Toast';
 import { AnalyticsSidebar } from './components/AnalyticsSidebar';
 import { HeatmapOverlay } from './components/HeatmapOverlay';
 import { processVideoFile } from './utils/videoProcessor';
+import { compressVideo } from './utils/videoCompressor';
 import { uploadVideo, getJobPreviewUrl, submitCalibration } from './utils/apiClient';
 import { pollJobUntilComplete, CalibrationNeededError } from './utils/jobPoller';
 import {
@@ -213,10 +214,27 @@ function App() {
     setFrame(0);
     setBallTrail([]);
     setHeatmapData([]);
+
+    // --- Compress video before processing ---
+    let fileToProcess: File = file;
+    try {
+      setProcessingLabel('Compressing video…');
+      const compressedBlob = await compressVideo(file, (pct) => {
+        setProcessingPct(Math.round(pct * 0.3)); // compression is 0-30% of overall progress
+      });
+      fileToProcess = new File([compressedBlob], file.name, {
+        type: compressedBlob.type || file.type,
+        lastModified: Date.now(),
+      });
+    } catch (compressionErr) {
+      console.warn('Video compression failed, using original file:', compressionErr);
+      fileToProcess = file;
+    }
+
     try {
       if (useServerAnalysis) {
         setProcessingLabel('Uploading to server…');
-        const { job_id } = await uploadVideo(file);
+        const { job_id } = await uploadVideo(fileToProcess);
         try {
           const result = await pollServerJob(job_id);
           applySequence(result.sequence, `Server analysis complete — ${result.sequence.length} frames!`);
@@ -230,7 +248,7 @@ function App() {
           throw err;
         }
       } else {
-        const result = await processVideoFile(file, (step, pct) => {
+        const result = await processVideoFile(fileToProcess, (step, pct) => {
           setProcessingLabel(step);
           setProcessingPct(pct);
           const stepIdx = Math.min(Math.floor(pct / 20), PROCESSING_STEPS.length - 1);

@@ -34,7 +34,7 @@ class PoseEstimator:
                 
                 # Check overall confidence (mean of all keypoints)
                 mean_conf = np.mean(kps[:, 2])
-                if mean_conf < 0.3:
+                if mean_conf < 0.2:
                     continue
                 
                 # Extract ankle midpoints for ground contact
@@ -75,15 +75,31 @@ class PoseEstimator:
         # Take the top 2 highest confidence detections
         top_2 = valid_detections[:2]
         
-        # Assign to player_bottom and player_top based on Z
+        # Assign to player_bottom and player_top.
+        # Primary method: use z-sign (positive z = bottom/near player, negative z = top/far player)
+        # Fallback: if both on the same z-side (common in broadcast angles),
+        #           use the pixel v-coordinate (higher v = lower in frame = closer = bottom)
         output = {"player_bottom": None, "player_top": None}
         
-        for det in top_2:
-            if det["z"] > 0:
-                if output["player_bottom"] is None or det["conf"] > output["player_bottom"]["conf"]:
-                    output["player_bottom"] = det
+        if len(top_2) == 2:
+            # Check if both players are on the same z-side
+            same_side = (top_2[0]["z"] > 0) == (top_2[1]["z"] > 0)
+            if same_side:
+                # Use pixel v-coordinate: larger v = lower in image = closer to camera = bottom player
+                sorted_by_v = sorted(top_2, key=lambda d: d["v"], reverse=True)
+                output["player_bottom"] = sorted_by_v[0]
+                output["player_top"] = sorted_by_v[1]
             else:
-                if output["player_top"] is None or det["conf"] > output["player_top"]["conf"]:
-                    output["player_top"] = det
-                    
+                for det in top_2:
+                    if det["z"] > 0:
+                        output["player_bottom"] = det
+                    else:
+                        output["player_top"] = det
+        elif len(top_2) == 1:
+            det = top_2[0]
+            if det["z"] > 0:
+                output["player_bottom"] = det
+            else:
+                output["player_top"] = det
+                
         return output
