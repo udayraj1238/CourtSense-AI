@@ -17,8 +17,8 @@ app_port: 8000
 <br/>
 <br/>
 
-<a href="https://huggingface.co/spaces/udayraj1238/CourtSense-AI" target="_blank">
-  <img src="https://img.shields.io/badge/🤗_Hugging_Face-Live_Demo-FFD21E?style=for-the-badge" alt="Hugging Face Space" />
+<a href="https://udayraj1238.github.io/CourtSense-AI/" target="_blank">
+  <img src="https://img.shields.io/badge/🎾_Play_Live_Demo-Click_Here_to_Launch-06B6D4?style=for-the-badge&logo=react&logoColor=white" height="50" alt="Launch Live Web App" />
 </a>
 
 <br/>
