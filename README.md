@@ -15,6 +15,13 @@ app_port: 8000
 <a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=06B6D4&center=true&vCenter=true&width=600&lines=Tennis+Video+%E2%86%92+Interactive+3D+Replay;YOLOv8-Pose+%7C+SegFormer+%7C+Three.js;Real-time+Speed+%26+Spin+Analytics;150-Frame+Physics-Accurate+Replays" alt="Typing SVG" /></a>
 
 <br/>
+<br/>
+
+<a href="https://huggingface.co/spaces/udayraj1238/CourtSense-AI" target="_blank">
+  <img src="https://img.shields.io/badge/🤗_Hugging_Face-Live_Demo-FFD21E?style=for-the-badge" alt="Hugging Face Space" />
+</a>
+
+<br/>
 
 <!-- Badges Row 1 -->
 <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" />

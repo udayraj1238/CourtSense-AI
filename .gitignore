@@ -53,3 +53,8 @@ backend/data/jobs.db
 # Gemini/Agent artifacts
 .gemini/
 .agents/
+
+# Training outputs
+runs/
+backend/training/datasets/tennis_ball/
+!backend/training/datasets/tennis_ball/data.yaml

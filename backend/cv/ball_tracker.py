@@ -6,11 +6,16 @@ from ultralytics import YOLO
 from backend.cv.homography import CourtProjector
 
 class BallTracker:
-    def __init__(self, model_path: str = "yolov8n.pt"):
-        # We use a standard YOLOv8n model for V5.0. 
-        # In COCO, class 32 is 'sports ball'.
+    def __init__(self, model_path: str = "yolov8n_tennis.pt"):
+        # We use a custom fine-tuned YOLOv8 model for V5.0. 
+        # In our custom dataset, class 0 is 'tennis_ball'.
         self.model = YOLO(model_path)
-        self.SPORTS_BALL_CLASS_ID = 32
+        
+        if "tennis" in model_path:
+            self.classes_to_detect = [0]
+        else:
+            # Fallback to standard COCO
+            self.classes_to_detect = [32]
         
     def detect_ball(self, frame: np.ndarray, projector: CourtProjector) -> Optional[Dict[str, float]]:
         """
@@ -18,7 +23,7 @@ class BallTracker:
         Note: The true height (y) is estimated in the pipeline stage, not here.
         Returns: {"x": float, "z": float, "conf": float, "u": float, "v": float} or None
         """
-        results = self.model(frame, classes=[self.SPORTS_BALL_CLASS_ID], verbose=False)
+        results = self.model(frame, classes=self.classes_to_detect, verbose=False)
         
         valid_detections = []
         
