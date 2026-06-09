@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.interpolate import CubicSpline
 from typing import List, Dict, Any
+from backend.cv.homography import CourtProjector
 
 def fill_gaps_with_spline(positions: List[Dict[str, Any]], max_gap: int = 20) -> None:
     """
@@ -46,9 +47,9 @@ def fill_gaps_with_spline(positions: List[Dict[str, Any]], max_gap: int = 20) ->
                 if gap_len <= max_gap:
                     # Fill this gap
                     for j in range(current_gap_start, i):
-                        positions[j]["position"]["x"] = float(cs_x(j))
-                        positions[j]["position"]["y"] = float(cs_y(j))
-                        positions[j]["position"]["z"] = float(cs_z(j))
+                        positions[j]["position"]["x"] = float(np.clip(cs_x(j), -CourtProjector.HW - 3, CourtProjector.HW + 3))
+                        positions[j]["position"]["y"] = float(np.clip(cs_y(j), 0.0, 12.0))
+                        positions[j]["position"]["z"] = float(np.clip(cs_z(j), -CourtProjector.HL - 3, CourtProjector.HL + 3))
                         # Note: we leave is_occluded=True so the frontend can still style it differently 
                         # as per the gap-aware BallTrail logic.
                 current_gap_start = None
@@ -58,6 +59,6 @@ def fill_gaps_with_spline(positions: List[Dict[str, Any]], max_gap: int = 20) ->
         gap_len = n - current_gap_start
         if gap_len <= max_gap:
             for j in range(current_gap_start, n):
-                positions[j]["position"]["x"] = float(cs_x(j))
-                positions[j]["position"]["y"] = float(cs_y(j))
-                positions[j]["position"]["z"] = float(cs_z(j))
+                positions[j]["position"]["x"] = float(np.clip(cs_x(j), -CourtProjector.HW - 3, CourtProjector.HW + 3))
+                positions[j]["position"]["y"] = float(np.clip(cs_y(j), 0.0, 12.0))
+                positions[j]["position"]["z"] = float(np.clip(cs_z(j), -CourtProjector.HL - 3, CourtProjector.HL + 3))

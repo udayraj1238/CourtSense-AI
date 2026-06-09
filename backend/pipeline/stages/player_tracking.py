@@ -5,6 +5,7 @@ from typing import List, Dict, Any
 from backend.cv.pose_estimator import PoseEstimator
 from backend.cv.homography import CourtProjector
 from backend.cv.smoothing import PointOneEuroFilter
+from backend.config import get_settings
 
 # Only run YOLO inference on every Nth frame for CPU performance.
 # Skipped frames are linearly interpolated (not repeated).
@@ -25,7 +26,8 @@ def process_player_tracking(video_path: str, projector: CourtProjector, fps: flo
     linearly interpolates skipped frames, applies OneEuro smoothing, and returns
     a list of player states per frame.
     """
-    estimator = PoseEstimator()
+    settings = get_settings()
+    estimator = PoseEstimator(str(settings.pose_model_path))
     
     cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))

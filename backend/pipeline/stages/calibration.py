@@ -19,6 +19,8 @@ def normalized_video_path(settings: Settings, job_id: str, upload_path: Path) ->
     return normalized if normalized.exists() else upload_path
 
 
+MAX_CALIBRATION_ATTEMPTS = 2
+
 async def calibrate_job(
     job_id: str,
     upload_path: Path,
@@ -36,6 +38,20 @@ async def calibrate_job(
             calibration_failed=0,
         )
         return projector
+
+    job = await get_job_manager().get_job(job_id)
+    attempt = job.get("calibration_attempts", 0) + 1 if job else 1
+    
+    if attempt > MAX_CALIBRATION_ATTEMPTS:
+        # Force manual calibration
+        await get_job_manager().update_job(
+            job_id, status="calibration_required",
+            calibration_failed=1,
+            error="Auto-calibration failed after multiple attempts. Please set corners manually."
+        )
+        raise CalibrationRequiredError("Auto-calibration failed after multiple attempts. Please set corners manually.")
+    
+    await get_job_manager().update_job(job_id, calibration_attempts=attempt)
 
     await asyncio.to_thread(extract_preview_frame, str(video), preview_path, 0.5)
 

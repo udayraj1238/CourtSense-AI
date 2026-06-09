@@ -70,11 +70,11 @@ function applyEMA(seq: ProcFrameData[], alpha: number) {
   if (seq.length < 2) return;
 
   let prevBall = { ...seq[0].ball.position };
-  let prevP1 = { ...seq[0].players.find(p => p.id.includes('bottom'))?.position } as Coordinate;
-  let prevP2 = { ...seq[0].players.find(p => p.id.includes('top'))?.position } as Coordinate;
-
-  if (!prevP1) prevP1 = { x: 0, y: 0, z: 10 };
-  if (!prevP2) prevP2 = { x: 0, y: 0, z: -10 };
+  const p1Found = seq[0].players.find(p => p.id.includes('bottom'));
+  let prevP1: Coordinate = p1Found?.position ?? { x: 0, y: 0, z: 10 };
+  
+  const p2Found = seq[0].players.find(p => p.id.includes('top'));
+  let prevP2: Coordinate = p2Found?.position ?? { x: 0, y: 0, z: -10 };
 
   for (let i = 1; i < seq.length; i++) {
     // Ball
@@ -102,8 +102,11 @@ function applyEMA(seq: ProcFrameData[], alpha: number) {
 function applyJitterGate(seq: ProcFrameData[], maxDeltaMeters: number) {
   if (seq.length < 2) return;
 
-  let prevP1 = { ...seq[0].players.find(p => p.id.includes('bottom'))?.position } as Coordinate;
-  let prevP2 = { ...seq[0].players.find(p => p.id.includes('top'))?.position } as Coordinate;
+  const p1Found = seq[0].players.find(p => p.id.includes('bottom'));
+  let prevP1: Coordinate = p1Found?.position ?? { x: 0, y: 0, z: 10 };
+  
+  const p2Found = seq[0].players.find(p => p.id.includes('top'));
+  let prevP2: Coordinate = p2Found?.position ?? { x: 0, y: 0, z: -10 };
 
   for (let i = 1; i < seq.length; i++) {
     for (const player of seq[i].players) {

@@ -29,6 +29,7 @@ class PoseEstimator:
         if len(results) > 0 and results[0].keypoints is not None and len(results[0].keypoints.data) > 0:
             keypoints_data = results[0].keypoints.data.cpu().numpy() # [num_persons, 17, 3] (x, y, conf)
             
+            all_raw_dets = []
             for i in range(len(keypoints_data)):
                 kps = keypoints_data[i]
                 
@@ -61,14 +62,35 @@ class PoseEstimator:
                 if abs(x) > projector.HW + 2.0 or abs(z) > projector.HL + 4.0:
                     continue # Discard umpires/line judges far off court
                 
+                all_raw_dets.append((x, z, mean_conf, u, v))
+                
+            # Update history to track static people
+            if not hasattr(self, '_recent_detections'):
+                self._recent_detections = []
+            
+            current_frame_coords = [(x, z) for x, z, c, u, v in all_raw_dets]
+            self._recent_detections.append(current_frame_coords)
+            if len(self._recent_detections) > 10:
+                self._recent_detections.pop(0)
+                
+            for x, z, conf, u, v in all_raw_dets:
+                static_count = 0
+                for past_frame_dets in self._recent_detections[:-1]:
+                    for px, pz in past_frame_dets:
+                        if np.hypot(x - px, z - pz) < 0.3:
+                            static_count += 1
+                            break
+                if static_count >= 8:
+                    continue # Exclude static person
+                
                 valid_detections.append({
                     "x": x,
                     "z": z,
-                    "conf": mean_conf,
+                    "conf": conf,
                     "u": u,
                     "v": v
                 })
-                
+        
         # Sort valid detections by confidence descending
         valid_detections.sort(key=lambda d: d["conf"], reverse=True)
         

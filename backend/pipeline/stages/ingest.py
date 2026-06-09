@@ -116,12 +116,23 @@ def ingest_video(
 
     out_meta = probe_video(output_path)
     out_duration = float(out_meta.get("format", {}).get("duration", duration))
-    frame_count = int(round(out_duration * settings.output_fps))
+    
+    out_stream = next(
+        (s for s in out_meta.get("streams", []) if s.get("codec_type") == "video"),
+        {},
+    )
+    actual_fps = _parse_fps(out_stream.get("r_frame_rate", "30/1"))
+    
+    nb_frames = out_stream.get("nb_frames")
+    if nb_frames is not None:
+        frame_count = int(nb_frames)
+    else:
+        frame_count = int(round(out_duration * actual_fps))
 
     return IngestResult(
         normalized_path=output_path,
         duration_sec=out_duration,
-        native_fps=native_fps,
+        native_fps=actual_fps,
         frame_count=frame_count,
         width=width,
         height=height,

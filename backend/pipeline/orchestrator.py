@@ -13,6 +13,7 @@ from backend.cv.homography import CourtProjector
 from backend.pipeline.stages.player_tracking import process_player_tracking
 from backend.pipeline.stages.ball_tracking import process_ball_tracking
 from backend.pipeline.stages.rally_synthesizer import synthesize_rally
+from backend.pipeline.stages.analytics import calculate_analytics
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +79,12 @@ async def run_pipeline(job_id: str, on_progress: ProgressCallback) -> None:
     # --- Ball Tracking: Try YOLO first, then fallback to synthesis ---
     await on_progress("ball_tracking", 10, overall_progress("ball_tracking", 10), frames_total, frames_total)
     
+    def ball_progress(frame_idx, total):
+        pct = min(100, max(0, int(100 * frame_idx / max(1, total))))
+        asyncio.run_coroutine_threadsafe(on_progress("ball_tracking", pct, overall_progress("ball_tracking", pct), total, frame_idx), loop)
+
     ball_states_raw = await asyncio.to_thread(
-        process_ball_tracking, str(normalized), projector, settings.output_fps, None
+        process_ball_tracking, str(normalized), projector, settings.output_fps, ball_progress
     )
     
     # Check how many frames actually got real detections
@@ -94,7 +99,6 @@ async def run_pipeline(job_id: str, on_progress: ProgressCallback) -> None:
         ball_states = ball_states_raw
         
         # Still compute analytics from the raw data
-        from backend.pipeline.stages.analytics import calculate_analytics
         analytics_data = calculate_analytics(ball_states, player_states, settings.output_fps)
     else:
         # YOLO failed — synthesize a realistic rally from player positions

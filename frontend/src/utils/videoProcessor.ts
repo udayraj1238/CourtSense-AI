@@ -351,7 +351,7 @@ export async function processVideoFile(
   onProgress('Generating rally…', 62);
   await sleep(0);
 
-  const seed = file.size ^ Math.round(duration * 100);
+  const seed = file.size ^ Math.round(duration * 100) ^ (file.lastModified & 0xFFFF);
   const rng  = mkRng(seed);
   let { ball, players } = generateRally(duration, timeline, rng);
   // Two Gaussian smoothing passes on ball trajectory

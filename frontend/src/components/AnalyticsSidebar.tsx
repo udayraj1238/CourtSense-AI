@@ -7,6 +7,7 @@ interface AnalyticsSidebarProps {
   frame: number;
   totalFrames: number;
   isPlaying: boolean;
+  isServerAnalysis: boolean;
 }
 
 /* Radial Speed Gauge */
@@ -89,12 +90,12 @@ function SpeedGauge({ speed }: { speed: number }) {
 }
 
 /* Spin Rate Ring */
-function SpinRing({ rpm }: { rpm: number }) {
+function SpinRing({ rpm, isServerAnalysis }: { rpm: number; isServerAnalysis: boolean }) {
   const maxRpm = 5000;
   const pct = Math.min(rpm / maxRpm, 1);
   const radius = 28;
   const circumference = 2 * Math.PI * radius;
-  const filled = circumference * pct;
+  const filled = isServerAnalysis ? circumference * pct : 0;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
@@ -132,7 +133,7 @@ function SpinRing({ rpm }: { rpm: number }) {
             color: 'var(--cyan)',
             lineHeight: 1,
           }}>
-            {Math.round(rpm)}
+            {isServerAnalysis ? Math.round(rpm) : '—'}
           </span>
           <span style={{ fontSize: '7px', color: 'var(--text-muted)', letterSpacing: '0.08em' }}>rpm</span>
         </div>
@@ -148,7 +149,7 @@ function SpinRing({ rpm }: { rpm: number }) {
         color: 'var(--text-muted)',
       }}>
         <SpinIcon size={9} />
-        Spin Rate
+        {isServerAnalysis ? 'Spin Rate' : 'Est. Spin'}
       </div>
     </div>
   );
@@ -196,7 +197,7 @@ function MiniTimeline({ frame, total }: { frame: number; total: number }) {
 }
 
 export const AnalyticsSidebar: React.FC<AnalyticsSidebarProps> = React.memo(({
-  ballSpeed, spinRate, frame, totalFrames,
+  ballSpeed, spinRate, frame, totalFrames, isServerAnalysis
 }) => {
   const classifySpeed = useMemo(() => {
     if (ballSpeed > 180) return { label: 'Smash', color: 'var(--rose)' };
@@ -267,7 +268,7 @@ export const AnalyticsSidebar: React.FC<AnalyticsSidebarProps> = React.memo(({
         gap: '8px',
         width: '100%',
       }}>
-        <SpinRing rpm={spinRate} />
+        <SpinRing rpm={spinRate} isServerAnalysis={isServerAnalysis} />
       </div>
 
       {/* Timeline mini card */}

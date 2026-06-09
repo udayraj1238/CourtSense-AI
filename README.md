@@ -12,7 +12,7 @@ app_port: 8000
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0D9488,50:06B6D4,100:3B82F6&height=220&section=header&text=CourtSense%20AI&fontSize=50&fontColor=ffffff&animation=fadeIn&fontAlignY=35&desc=3D%20Tennis%20Analytics%20Engine&descSize=18&descAlignY=55&descAlign=50" width="100%"/>
 
 <!-- Typing SVG -->
-<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=06B6D4&center=true&vCenter=true&width=600&lines=Tennis+Video+%E2%86%92+Interactive+3D+Replay;YOLOv8-Pose+%7C+SegFormer+%7C+Three.js;Real-time+Speed+%26+Spin+Analytics;150-Frame+Physics-Accurate+Replays" alt="Typing SVG" /></a>
+<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=06B6D4&center=true&vCenter=true&width=600&lines=Tennis+Video+%E2%86%92+Interactive+3D+Replay;YOLOv8-Pose+%7C+Hough+Lines+%7C+Three.js;Physics-Based+Synthesis+%26+Replays;150-Frame+Physics-Accurate+Replays" alt="Typing SVG" /></a>
 
 <br/>
 <br/>
@@ -80,7 +80,7 @@ An **interactive 3D replay** you can rotate, zoom, and replay from any angle —
 ```mermaid
 graph TD
     A[🎾 Tennis Match Video] --> B[YOLOv8-Pose]
-    A --> C[SegFormer-B2]
+    A --> C[Hough Line Detection]
     A --> D[HSV + YOLO]
     
     B -->|17 COCO Keypoints| E[OpenCV Homography]
@@ -121,9 +121,9 @@ graph TD
 17 COCO keypoints per frame for full skeleton tracking
 </td>
 <td align="center" width="25%">
-<img src="https://img.shields.io/badge/🎾-Court_Segmentation-06B6D4?style=for-the-badge&labelColor=1a1a2e" /><br/>
-<b>SegFormer-B2</b><br/>
-Pixel-perfect court surface segmentation
+<img src="https://img.shields.io/badge/🎾-Court_Detection-06B6D4?style=for-the-badge&labelColor=1a1a2e" /><br/>
+<b>Hough Line Detection</b><br/>
+Robust adaptive court line detection
 </td>
 <td align="center" width="25%">
 <img src="https://img.shields.io/badge/📐-3D_Mapping-3B82F6?style=for-the-badge&labelColor=1a1a2e" /><br/>
@@ -132,8 +132,8 @@ Pixel-perfect court surface segmentation
 </td>
 <td align="center" width="25%">
 <img src="https://img.shields.io/badge/🔮-Physics-8B5CF6?style=for-the-badge&labelColor=1a1a2e" /><br/>
-<b>Magnus Effect</b><br/>
-Realistic speed & spin estimation
+<b>Physics-based synthesis</b><br/>
+Parabolic trajectories and Bezier bounces
 </td>
 </tr>
 <tr>
@@ -169,14 +169,35 @@ No backend needed for processing
 | Layer | Technology | Purpose |
 |:------|:-----------|:--------|
 | 🧠 **Pose Estimation** | YOLOv8-Pose, MediaPipe | 17-keypoint skeleton extraction |
-| 🎨 **Segmentation** | SegFormer-B2 | Court surface pixel-level segmentation |
+| 🎨 **Court Mapping** | Hough Line Detection | Robust adaptive thresholding for lines |
 | 🎯 **Ball Tracking** | HSV Detection + YOLO | Dual-method fused ball detection |
 | 📐 **Mapping** | OpenCV Homography | 2D video → 3D real-world coordinates |
 | 📊 **Smoothing** | Kalman Filter, EMA | Trajectory denoising & stabilization |
-| ⚡ **Physics** | Magnus-effect model | Speed (km/h) & spin (rpm) estimation |
+| ⚡ **Physics** | Physics-based trajectory synthesis | True Bezier bounce physics & speed estimation |
 | 🔌 **Backend** | FastAPI, Python | REST API + JSON coordinate streams |
 | 🖥️ **Frontend** | React, Three.js, TypeScript | Interactive 3D visualization |
 | 🐳 **Deploy** | Docker, GitHub Pages | Containerized & static deployment |
+
+---
+
+<div align="center">
+<h2>🗺️ Roadmap</h2>
+</div>
+
+We believe in open development. Here is what is currently implemented vs what is planned for the future:
+
+### ✅ Currently Implemented
+- **YOLOv8-Pose** for precise 17-keypoint 3D player tracking
+- **Hough Line Detection** with adaptive thresholding for robust court calibration
+- **Physics-Based Synthesis** including accurate net clearance, quadratic Bezier bounces, and shot-type categorization
+- **3D Interactive Replay** in the browser with WebGL & React Three Fiber
+- **In-Browser V4 Pipeline** for quick client-side demos
+
+### 🚧 Planned / Under Development
+- **True Magnus Effect Physics:** Implementing actual air resistance and spin physics (currently using estimated parabolic arcs).
+- **SegFormer Surface Segmentation:** Replacing Hough lines with SegFormer-B2 for pixel-perfect segmentation on degraded/unusual courts.
+- **Spin Analytics Extraction:** Using high-FPS ball deformation analysis to calculate true RPM from the video instead of inferred spin bands.
+- **Multi-Camera Sync:** Supporting multiple angles fused into a single 3D scene.
 
 ---
 
@@ -190,7 +211,12 @@ git clone https://github.com/udayraj1238/CourtSense-AI.git
 cd CourtSense-AI
 
 # Backend
+# For development (unpinned):
 pip install -r requirements.txt
+
+# For exact reproducibility:
+pip install -r requirements/pinned.txt
+bash scripts/download_models.sh
 uvicorn main:app --reload --port 8000
 
 # Frontend (new terminal)

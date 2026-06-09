@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     output_fps: int = 30
 
     stub_demo_json: Path = REPO_ROOT / "frontend" / "public" / "demo_data.json"
+    tennis_model_path: Path = REPO_ROOT / "yolov8n_tennis.pt"
+    pose_model_path: Path = REPO_ROOT / "yolov8n-pose.pt"
 
     # Stub pipeline simulates CV work (seconds). Set 0 for instant response in tests.
     stub_processing_delay_sec: float = 2.0

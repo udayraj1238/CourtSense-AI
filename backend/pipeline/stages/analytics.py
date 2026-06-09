@@ -29,7 +29,9 @@ def calculate_analytics(
             dy = p_curr["y"] - p_prev["y"]
             dz = p_curr["z"] - p_prev["z"]
             
-            v = np.array([dx, dy, dz]) * fps
+            # The speed calculation should only use X and Z components.
+            # Including Y (height) makes a ball rising 2.4m in one frame appear to be going 220+ km/h
+            v = np.array([dx, 0.0, dz]) * fps
             velocities.append(v)
             
             speed = np.linalg.norm(v) * 3.6 # m/s to km/h
@@ -53,27 +55,28 @@ def calculate_analytics(
         
         # Check for Z velocity reversal
         if vz_prev * vz_curr < 0 and abs(vz_prev - vz_curr) > 10.0:
-            # Reversal detected. Who is closest?
+            # Reversal detected. Who hit it?
             ball_pos = ball_states[i]["position"]
             bx, bz = ball_pos["x"], ball_pos["z"]
             
-            closest_player = None
-            min_dist = float('inf')
-            
+            # Check hitter based on court half
+            if bz > 0:  # Ball in bottom half -> p1 (player_bottom) hit it
+                hitter_id = "p1"
+            else:  # Ball in top half -> p2 hit it
+                hitter_id = "p2"
+                
+            # Verify the assigned player is actually close
             for player in player_states[i]:
                 if player is not None and player.get("id"):
-                    px = player["position"]["x"]
-                    pz = player["position"]["z"]
-                    
-                    dist = np.hypot(bx - px, bz - pz)
-                    if dist < min_dist:
-                        min_dist = dist
-                        closest_player = player["id"]
-                        
-            # If a player is reasonably close (e.g., within 4 meters)
-            if closest_player and min_dist < 4.0:
-                # Map 'player_bottom' to 'p1', 'player_top' to 'p2'
-                hitter_id = "p1" if closest_player == "player_bottom" else "p2"
+                    if (hitter_id == "p1" and "bottom" in player["id"]) or \
+                       (hitter_id == "p2" and "top" in player["id"]):
+                        px = player["position"]["x"]
+                        pz = player["position"]["z"]
+                        dist = np.hypot(bx - px, bz - pz)
+                        if dist > 5.0:
+                            hitter_id = None  # Too far — no hitter assigned
+                            
+            if hitter_id:
                 hitters[i] = hitter_id
                 
                 # Expand the hit window slightly so frontend has time to trigger animation

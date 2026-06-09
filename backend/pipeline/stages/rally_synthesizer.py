@@ -81,65 +81,34 @@ def _detect_shot_events(
     fps: float, 
     num_frames: int
 ) -> List[Dict[str, Any]]:
-    """
-    Detect approximate shot events by looking for moments when players 
-    decelerate sharply or change lateral direction (indicating a stroke).
-    """
     events = []
-    window = max(3, int(fps * 0.15))  # ~4-5 frames at 30fps
-    
-    # Minimum frames between shots (~0.6s travel time)
-    min_gap = int(fps * 0.6)
-    
-    # Alternate between players
-    last_hitter = None
+    min_gap = int(fps * 0.7)  # Minimum 0.7s between shots (realistic)
     last_event_frame = -min_gap
-    
-    for i in range(window, num_frames - window):
+    expected_hitter = "p1"  # Enforce strict alternation
+
+    for i in range(5, num_frames - 5):
         if i - last_event_frame < min_gap:
             continue
-        
-        # Check P1 (bottom) for deceleration
-        p1_vel_before = np.linalg.norm(p1_pos[i] - p1_pos[i - window]) / window * fps
-        p1_vel_after = np.linalg.norm(p1_pos[i + window] - p1_pos[i]) / window * fps
-        p1_decel = p1_vel_before - p1_vel_after
-        
-        # Check P2 (top) for deceleration
-        p2_vel_before = np.linalg.norm(p2_pos[i] - p2_pos[i - window]) / window * fps
-        p2_vel_after = np.linalg.norm(p2_pos[i + window] - p2_pos[i]) / window * fps
-        p2_decel = p2_vel_before - p2_vel_after
-        
-        # Check lateral direction change
-        p1_dx_before = p1_pos[i, 0] - p1_pos[i - window, 0]
-        p1_dx_after = p1_pos[i + window, 0] - p1_pos[i, 0]
-        p1_direction_change = p1_dx_before * p1_dx_after < 0 and abs(p1_dx_before) > 0.3
-        
-        p2_dx_before = p2_pos[i, 0] - p2_pos[i - window, 0]
-        p2_dx_after = p2_pos[i + window, 0] - p2_pos[i, 0]
-        p2_direction_change = p2_dx_before * p2_dx_after < 0 and abs(p2_dx_before) > 0.3
-        
-        # Determine who is hitting
-        p1_score = p1_decel * 2 + (3.0 if p1_direction_change else 0.0)
-        p2_score = p2_decel * 2 + (3.0 if p2_direction_change else 0.0)
-        
-        threshold = 1.5
-        if p1_score > threshold and (last_hitter != "p1" or p1_score > p2_score + 1.0):
-            events.append({
-                "frame": i,
-                "hitter": "p1",
-                "pos": p1_pos[i].tolist(),
-            })
-            last_hitter = "p1"
+
+        # Use wrist velocity spike as hit indicator (if pose data available)
+        # Fallback: lateral direction reversal
+        if expected_hitter == "p1":
+            dx_before = p1_pos[i, 0] - p1_pos[max(0, i-4), 0]
+            dx_after  = p1_pos[min(num_frames-1, i+4), 0] - p1_pos[i, 0]
+            triggered = (dx_before * dx_after < 0 and abs(dx_before) > 0.2) \
+                        or (abs(p1_pos[i, 1]) > 8.0)  # Near baseline
+        else:
+            dx_before = p2_pos[i, 0] - p2_pos[max(0, i-4), 0]
+            dx_after  = p2_pos[min(num_frames-1, i+4), 0] - p2_pos[i, 0]
+            triggered = (dx_before * dx_after < 0 and abs(dx_before) > 0.2) \
+                        or (abs(p2_pos[i, 1]) > 8.0)
+
+        if triggered:
+            pos = p1_pos[i] if expected_hitter == "p1" else p2_pos[i]
+            events.append({"frame": i, "hitter": expected_hitter, "pos": pos.tolist()})
             last_event_frame = i
-        elif p2_score > threshold and (last_hitter != "p2" or p2_score > p1_score + 1.0):
-            events.append({
-                "frame": i,
-                "hitter": "p2",
-                "pos": p2_pos[i].tolist(),
-            })
-            last_hitter = "p2"
-            last_event_frame = i
-    
+            expected_hitter = "p2" if expected_hitter == "p1" else "p1"
+
     return events
 
 
@@ -167,6 +136,32 @@ def _generate_default_shots(num_frames: int, fps: float) -> List[Dict[str, Any]]
     
     return events
 
+
+def _arc_height_at_z(sz, ez, z, peak_height, start_height, end_height):
+    """Calculate ball height at any z position along the arc."""
+    if abs(ez - sz) < 0.01:
+        return start_height
+    t = (z - sz) / (ez - sz)
+    t = max(0.0, min(1.0, t))
+    base = start_height + (end_height - start_height) * t
+    arc = peak_height * math.sin(t * math.pi)
+    return base + arc
+
+SHOT_TYPES = [
+    {"name": "flat",      "arc_ratio": 0.05, "speed_lo": 120, "speed_hi": 170, "weight": 0.20},
+    {"name": "topspin",   "arc_ratio": 0.12, "speed_lo": 80,  "speed_hi": 130, "weight": 0.55},
+    {"name": "moonball",  "arc_ratio": 0.30, "speed_lo": 60,  "speed_hi": 90,  "weight": 0.10},
+    {"name": "slice",     "arc_ratio": 0.03, "speed_lo": 60,  "speed_hi": 100, "weight": 0.15},
+]
+
+def pick_shot_type():
+    r = random.random()
+    cum = 0
+    for s in SHOT_TYPES:
+        cum += s["weight"]
+        if r < cum:
+            return s
+    return SHOT_TYPES[1]
 
 def _generate_trajectory(
     shots: List[Dict[str, Any]],
@@ -238,18 +233,51 @@ def _generate_trajectory(
         ex = shot_end["pos"][0]
         ez = shot_end["pos"][1]
         
+        # Offset start position toward receiver (net direction)
+        direction = math.atan2(ez - sz, ex - sx)
+        RACKET_REACH = 0.5  # meters
+        sx = sx + math.cos(direction) * RACKET_REACH
+        sz = sz + math.sin(direction) * RACKET_REACH
+        
         # Calculate the arc
         # Ball height: parabolic arc peaking at midpoint
         # Peak height depends on shot distance (longer shots = higher arcs)
         distance = math.sqrt((ex - sx)**2 + (ez - sz)**2)
-        peak_height = max(1.2, min(4.0, distance * 0.15 + random.uniform(0.3, 0.8)))
+        shot = pick_shot_type()
+        peak_height = distance * shot["arc_ratio"] + random.uniform(0.1, 0.4)
+        peak_height = max(1.0, peak_height)  # Never below net
         
         # Height at start (racket height ~1.0m) and end
         start_height = 1.0 + random.uniform(-0.2, 0.3)
+        end_height = 0.08
         
-        # Find bounce point (~60-75% of the way through the arc)
-        bounce_frac = random.uniform(0.55, 0.70)
-        bounce_frame = int(arc_frames * bounce_frac)
+        NET_Z = 0.0
+        NET_HEIGHT_CENTER = 0.914
+        DESIRED_NET_CLEARANCE = 0.6
+        
+        # Only check if ball path crosses the net
+        if (sz > 0 and ez < 0) or (sz < 0 and ez > 0):
+            height_at_net = _arc_height_at_z(sz, ez, NET_Z, peak_height, start_height, end_height)
+            if height_at_net < NET_HEIGHT_CENTER + DESIRED_NET_CLEARANCE:
+                # Raise the peak until net clearance is satisfied
+                deficit = (NET_HEIGHT_CENTER + DESIRED_NET_CLEARANCE) - height_at_net
+                peak_height += deficit / math.sin(math.pi * abs(NET_Z - sz) / abs(ez - sz))
+        
+        # Determine bounce position based on court geometry, not frame count
+        # Bounce should be 60-80% of the way into the RECEIVER's half
+        if shot_start["hitter"] == "p1":
+            # p1 hits from positive z toward negative z
+            # Receiver's half is z < 0
+            # Bounce should be between z=0 and z= -HL + 1.5
+            bounce_z = random.uniform(-1.5, -BASELINE_Z * 0.6)
+        else:
+            bounce_z = random.uniform(1.5, BASELINE_Z * 0.6)
+
+        # Calculate the frame at which ball reaches bounce_z
+        # (linear approximation is fine for timing)
+        def clamp_val(val, mn, mx): return max(mn, min(mx, val))
+        bounce_frac = abs(bounce_z - sz) / max(0.01, abs(ez - sz))
+        bounce_frame = int(arc_frames * clamp_val(bounce_frac, 0.45, 0.80))
         
         # Determine curve magnitude once for the entire shot
         curve_magnitude = random.uniform(-0.3, 0.3)
@@ -264,19 +292,17 @@ def _generate_trajectory(
             
             # Height: two-phase parabola (flight arc + bounce)
             if j < bounce_frame:
-                # Pre-bounce: parabolic arc from start_height down to bounce
-                bt = j / bounce_frame
-                # Parabola: starts at start_height, peaks at peak_height, lands at ~0.08m
-                y = start_height + (peak_height - start_height) * math.sin(bt * math.pi * 0.8)
-                if bt > 0.7:
-                    # Descending phase
-                    desc_t = (bt - 0.7) / 0.3
-                    y = y * (1 - desc_t) + 0.08 * desc_t
+                bt = j / bounce_frame  # 0 → 1
+                # Quadratic bezier from start_height → peak (at ~t=0.45) → 0 (ground)
+                # Use: h = (1-t)² * start_h + 2*(1-t)*t * peak_height + t² * 0.0
+                y = (1 - bt)**2 * start_height + 2 * (1 - bt) * bt * peak_height + bt**2 * 0.05
+                y = max(0.05, y)
             else:
-                # Post-bounce: smaller arc
+                # Post-bounce: smaller parabola up from 0.05m
                 post_t = (j - bounce_frame) / max(1, arc_frames - bounce_frame)
-                bounce_peak = peak_height * BOUNCE_COR * 0.4
-                y = 0.08 + bounce_peak * math.sin(post_t * math.pi)
+                bounce_peak = peak_height * BOUNCE_COR * random.uniform(0.35, 0.50)
+                y = 0.05 + bounce_peak * 4 * post_t * (1 - post_t)
+                y = max(0.05, y)
             
             y = max(0.05, y)
             
@@ -327,9 +353,9 @@ def _compute_analytics(
             bp = ball_states[i]["position"]
             bp_prev = ball_states[i - 1]["position"]
             dx = bp["x"] - bp_prev["x"]
-            dy = bp["y"] - bp_prev["y"]
             dz = bp["z"] - bp_prev["z"]
-            speed_ms = math.sqrt(dx*dx + dy*dy + dz*dz) * fps
+            # Ignore dy for speed — vertical motion is gravity, not shot speed
+            speed_ms = math.sqrt(dx*dx + dz*dz) * fps
             speed = speed_ms * 3.6  # m/s to km/h
         
         # Detect hitter: who is closest when the ball is at their end?
@@ -355,7 +381,7 @@ def _compute_analytics(
             spin = min(3500, abs(ax) * 800)  # rough RPM estimate
         
         analytics.append({
-            "speed_kmh": round(min(250, speed), 1),
+            "speed_kmh": round(min(220.0, max(5.0, speed)), 1),
             "spin_rpm": round(spin, 0),
             "hitter": hitter,
         })

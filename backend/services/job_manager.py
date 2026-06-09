@@ -40,6 +40,7 @@ class JobManager:
                     upload_path TEXT,
                     homography_json TEXT,
                     preview_path TEXT,
+                    calibration_attempts INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -55,6 +56,8 @@ class JobManager:
             await db.execute("ALTER TABLE jobs ADD COLUMN homography_json TEXT")
         if "preview_path" not in cols:
             await db.execute("ALTER TABLE jobs ADD COLUMN preview_path TEXT")
+        if "calibration_attempts" not in cols:
+            await db.execute("ALTER TABLE jobs ADD COLUMN calibration_attempts INTEGER NOT NULL DEFAULT 0")
 
     async def start_cleanup_loop(self) -> None:
         if self._cleanup_task is None:

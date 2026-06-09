@@ -5,7 +5,8 @@ class Kalman3D:
     def __init__(self, dt: float = 1/30.0):
         # State vector: [x, y, z, vx, vy, vz]
         # Measurement vector: [x, y, z]
-        self.kf = cv2.KalmanFilter(6, 3)
+        # Control vector: [1] (for gravity)
+        self.kf = cv2.KalmanFilter(6, 3, 1)
         self.dt = dt
         
         # Transition matrix (A)
@@ -17,6 +18,17 @@ class Kalman3D:
             [0, 0, 0, 1,  0,  0],
             [0, 0, 0, 0,  1,  0],
             [0, 0, 0, 0,  0,  1]
+        ], np.float32)
+        
+        # Control matrix (B)
+        GRAVITY = 9.81
+        self.kf.controlMatrix = np.array([
+            [0],
+            [-0.5 * GRAVITY * dt * dt],
+            [0],
+            [0],
+            [-GRAVITY * dt],
+            [0]
         ], np.float32)
         
         # Measurement matrix (H)
@@ -63,7 +75,8 @@ class Kalman3D:
         if not self.is_initialized:
             return 0.0, 0.0, 0.0
             
-        pred = self.kf.predict()
+        u = np.array([[1.0]], np.float32)
+        pred = self.kf.predict(u)
         return float(pred[0]), float(pred[1]), float(pred[2])
 
     def correct(self, x: float, y: float, z: float) -> tuple[float, float, float]:

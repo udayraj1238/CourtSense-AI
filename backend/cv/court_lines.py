@@ -20,11 +20,22 @@ def _resize(frame: np.ndarray, max_width: int = 1280) -> tuple[np.ndarray, float
 
 
 def _white_line_mask(bgr: np.ndarray) -> np.ndarray:
-    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
-    white = cv2.inRange(hsv, np.array([0, 0, 160], np.uint8), np.array([180, 80, 255], np.uint8))
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    _, adaptive = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    combined = cv2.bitwise_or(white, adaptive)
+    
+    # Adaptive threshold — works on all court types
+    adaptive = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY, blockSize=51, C=-8
+    )
+    
+    # White/light color mask — supplement for hard courts
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    white = cv2.inRange(hsv, np.array([0, 0, 150]), np.array([180, 60, 255]))
+    
+    # Also detect yellow lines (some indoor courts)
+    yellow = cv2.inRange(hsv, np.array([20, 80, 150]), np.array([35, 200, 255]))
+    
+    combined = cv2.bitwise_or(adaptive, cv2.bitwise_or(white, yellow))
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     return cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel, iterations=2)
 

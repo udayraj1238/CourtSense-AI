@@ -14,6 +14,8 @@ import {
   type SequenceResponse,
 } from './types/tracking';
 import { smoothSequence } from './utils/sequenceSmoother';
+import React from 'react';
+import { ErrorBoundary } from 'react-error-boundary';
 import {
   Play, Pause, RotateCcw, Upload, Zap, Eye, Target,
   ChevronLeft, ChevronRight, Video, Map,
@@ -67,6 +69,7 @@ function App() {
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [processingStep, setProcessingStep] = useState(0);
   const [useServerAnalysis, setUseServerAnalysis] = useState(isServerProcessingEnabled());
+  const [demoError, setDemoError] = useState<string | null>(null);
 
 
   const [ballPos, setBallPos] = useState<[number, number, number]>([0, 1, 0]);
@@ -147,6 +150,7 @@ function App() {
       })
       .catch(err => {
         setAppState('idle');
+        setDemoError('Demo data not available. Please upload your own tennis video.');
         addToast('Could not load demo_data.json.', 'error', 5000);
         console.error(err);
       });
@@ -430,6 +434,12 @@ function App() {
             </div>
           </div>
 
+          {demoError && (
+            <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', padding: '12px 16px', borderRadius: '8px', color: '#fca5a5', fontSize: '13px', textAlign: 'center', margin: '0 auto 20px', maxWidth: '400px' }}>
+              {demoError}
+            </div>
+          )}
+
           {appState === 'idle' && (
             <div className="animate-in-delayed-3" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               {/* Dual Mode Toggle */}
@@ -508,10 +518,10 @@ function App() {
                 {/* Card text */}
                 <div style={{ padding: '10px 14px 12px' }}>
                   <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '3px', letterSpacing: '-0.01em' }}>
-                    Djokovic vs Nadal — Epic Rally
+                    Demo Rally — Hard Court
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                    70 shots · 200 km/h peak · 28 seconds · Clay court
+                    Sample match footage · 8 shots · 128 km/h peak
                   </div>
                 </div>
               </button>
@@ -630,20 +640,28 @@ function App() {
         frame={frame}
         totalFrames={totalFrames}
         isPlaying={isPlaying}
+        isServerAnalysis={useServerAnalysis}
       />
 
       {/* 3D Canvas */}
       <main style={{ flex: 1 }}>
-        <TennisScene
-          ballPos={ballPos}
-          ballOccluded={ballOccluded}
-          player1Pos={p1Pos}
-          player2Pos={p2Pos}
-          ballTrail={ballTrail}
-          cameraPreset={cameraPreset}
-          p1Hitting={p1Hitting}
-          p2Hitting={p2Hitting}
-        />
+        <ErrorBoundary fallback={
+          <div style={{ color: 'white', padding: '2rem', textAlign: 'center' }}>
+            <h3>3D renderer not available</h3>
+            <p>Your device may not support WebGL. Try on a desktop browser.</p>
+          </div>
+        }>
+          <TennisScene
+            ballPos={ballPos}
+            ballOccluded={ballOccluded}
+            player1Pos={p1Pos}
+            player2Pos={p2Pos}
+            ballTrail={ballTrail}
+            cameraPreset={cameraPreset}
+            p1Hitting={p1Hitting}
+            p2Hitting={p2Hitting}
+          />
+        </ErrorBoundary>
       </main>
 
       {/* Heatmap Overlay */}

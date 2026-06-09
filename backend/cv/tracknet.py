@@ -192,6 +192,7 @@ class TrackNetInference:
         if not self.is_available:
             return None
 
+        import cv2
         import torch
 
         orig_h, orig_w = frame_curr.shape[:2]
@@ -220,8 +221,4 @@ class TrackNetInference:
         return (u, v)
 
 
-# Lazy import guard for cv2 (only needed in predict())
-try:
-    import cv2
-except ImportError:
-    pass
+

@@ -6,6 +6,7 @@ from backend.cv.ball_tracker import BallTracker
 from backend.cv.homography import CourtProjector
 from backend.cv.kalman3d import Kalman3D
 from backend.cv.spline import fill_gaps_with_spline
+from backend.config import get_settings
 
 def detect_bounces(positions: List[Dict[str, float]], fps: float = 30.0) -> List[int]:
     """
@@ -69,7 +70,10 @@ def estimate_heights(positions: List[Dict[str, Any]], bounces: List[int]) -> Non
     if length > 0:
         for i in range(last_idx + 1, len(positions)):
             t = (i - last_idx) / length
-            y = 0.08 + (1.0 - 0.08) * (t ** 2) # Half parabola up
+            # Post-bounce rise: ball decelerates as it rises
+            # Use: y = 0.08 + bounce_peak * (2t - t²)  [correct decelerating rise]
+            bounce_peak = 1.0 * BOUNCE_COR  # ~0.75m after first bounce
+            y = 0.08 + bounce_peak * (2 * t - t * t)
             positions[i]["position"]["y"] = max(0.08, y)
 
 
@@ -77,7 +81,8 @@ def estimate_heights(positions: List[Dict[str, Any]], bounces: List[int]) -> Non
 SKIP_FRAMES = 3
 
 def process_ball_tracking(video_path: str, projector: CourtProjector, fps: float = 30.0, progress_callback=None) -> List[Dict[str, Any]]:
-    tracker = BallTracker()
+    settings = get_settings()
+    tracker = BallTracker(str(settings.tennis_model_path))
     kf = Kalman3D(dt=1.0/fps)
     
     cap = cv2.VideoCapture(video_path)
