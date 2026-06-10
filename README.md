@@ -194,8 +194,8 @@ We believe in open development. Here is what is currently implemented vs what is
 - **In-Browser V4 Pipeline** for quick client-side demos
 
 ### 🚧 Planned / Under Development
-- **True Magnus Effect Physics:** Implementing actual air resistance and spin physics (currently using estimated parabolic arcs).
-- **SegFormer Surface Segmentation:** Replacing Hough lines with SegFormer-B2 for pixel-perfect segmentation on degraded/unusual courts.
+- **Advanced Physics:** Adding realistic air resistance and bounce-decay.
+- **Improved UI:** Enhancing the 3D replay viewer with more analytics overlays.
 - **Spin Analytics Extraction:** Using high-FPS ball deformation analysis to calculate true RPM from the video instead of inferred spin bands.
 - **Multi-Camera Sync:** Supporting multiple angles fused into a single 3D scene.
 
