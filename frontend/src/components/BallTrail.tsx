@@ -62,9 +62,11 @@ export const BallTrail: React.FC<BallTrailProps> = React.memo(({ positions }) =>
     linewidth: 1, // Note: >1 only works in WebGL2 with specific extensions
   }), []);
 
+  const lineObj = useMemo(() => new THREE.Line(geometry, material), [geometry, material]);
+
   if (positions.length < 2) return null;
 
-  return <primitive object={new THREE.Line(geometry, material)} ref={lineRef} />;
+  return <primitive object={lineObj} ref={lineRef} />;
 });
 
 BallTrail.displayName = 'BallTrail';

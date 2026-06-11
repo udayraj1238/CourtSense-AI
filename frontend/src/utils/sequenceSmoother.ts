@@ -15,8 +15,6 @@ export function smoothSequence(raw: ProcFrameData[]): ProcFrameData[] {
   const seq: ProcFrameData[] = JSON.parse(JSON.stringify(raw));
 
   fillBallGaps(seq, 20); // Gap fill up to 20 frames
-  applyEMA(seq, 0.6);    // EMA smoothing with alpha=0.6
-  applyJitterGate(seq, 4.0); // Reject jumps > 4m per frame for players
 
   return seq;
 }

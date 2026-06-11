@@ -43,8 +43,7 @@ export const Ball: React.FC<BallProps> = React.memo(({ position, isOccluded = fa
 
     // Lerp toward target — fast enough to track data, smooth enough to not pop
     // Slower follow when occluded (predicted) to avoid sharp snap if backend prediction is slightly off
-    const lerpFactor = Math.min(delta * (isOccluded ? 12 : 18), 1);
-    ball.position.lerp(targetVec.current, lerpFactor);
+    ball.position.copy(targetVec.current);
 
     // Visual spin proportional to speed
     const spd = speedRef.current;
