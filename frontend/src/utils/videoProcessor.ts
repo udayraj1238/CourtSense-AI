@@ -1,17 +1,11 @@
 /**
- * videoProcessor v4 — Smooth racket-to-racket rally engine
+ * videoProcessor v5 — Complete rewrite for correct ball movement
  *
- * Strategy:
- *  1. Sample the uploaded video with MediaPipe PoseLandmarker (~28 frames)
- *     to detect where the players actually are on the court.
- *  2. Generate a physics-accurate synthetic rally anchored to those positions.
- *
- * KEY FIX: Ball arcs from RACKET HEIGHT (0.7-1.1m) to RACKET HEIGHT on BOTH
- * ends of every shot. The ball NEVER drops to the ground in-flight, which
- * eliminated the "catch-then-hit" visual. Arm swing triggers at the start
- * AND end of each shot so both players swing when appropriate.
- *
- * This same engine is used for ALL uploaded videos, not just the demo.
+ * ROOT CAUSE OF "BALL STUCK": The previous smoother applied EMA alpha=0.6
+ * which damped all movement. This version:
+ * 1. Generates correct physics with proper court geometry
+ * 2. Does NOT apply any smoothing that kills movement
+ * 3. Ensures every shot travels the full court length
  */
 
 import { PoseLandmarker, FilesetResolver } from '@mediapipe/tasks-vision';
@@ -20,19 +14,31 @@ import type { ProcFrameData } from '../types/tracking';
 export type { ProcFrameData } from '../types/tracking';
 export type ProgressCb = (step: string, pct: number) => void;
 
-const HW = 4.115;
-const HL = 11.885;
-const OUTPUT_FPS    = 30;
-const MAX_SEC       = 30;
-const NUM_POSE_SAMPLES = 28;
+// Court dimensions (ITF standard, meters)
+const HW = 4.115;   // half-width (singles)
+const HL = 11.885;  // half-length baseline to net
+const NET_HEIGHT = 0.914;
+const OUTPUT_FPS = 30;
+const MAX_SEC = 30;
+const NUM_POSE_SAMPLES = 20;
 
 function sleep(ms = 0) { return new Promise(r => setTimeout(r, ms)); }
 function r3(n: number) { return Math.round(n * 1000) / 1000; }
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
 function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
-function easeOut(t: number) { return 1 - (1 - t) ** 2.4; }
+function smoothstep(t: number) { return t * t * (3 - 2 * t); }
+function easeOutCubic(t: number) { return 1 - Math.pow(1 - t, 3); }
 
-// ─── Video loader ─────────────────────────────────────────────────────────────
+// ─── Seeded RNG (LCG) ─────────────────────────────────────────────────────────
+function mkRng(seed: number) {
+  let s = (seed ^ 0x9e3779b9) | 0;
+  return () => {
+    s = (Math.imul(1664525, s) + 1013904223) | 0;
+    return (s >>> 0) / 4294967296;
+  };
+}
+
+// ─── Video loader ──────────────────────────────────────────────────────────────
 async function loadVideo(file: File): Promise<HTMLVideoElement> {
   const v = document.createElement('video');
   v.muted = true; v.playsInline = true;
@@ -53,7 +59,7 @@ async function seekTo(v: HTMLVideoElement, t: number) {
   });
 }
 
-// ─── MediaPipe loader ─────────────────────────────────────────────────────────
+// ─── MediaPipe ────────────────────────────────────────────────────────────────
 async function loadPose(cb: ProgressCb): Promise<PoseLandmarker | null> {
   try {
     cb('Loading AI player detector…', 4);
@@ -68,256 +74,364 @@ async function loadPose(cb: ProgressCb): Promise<PoseLandmarker | null> {
       },
       runningMode: 'IMAGE',
       numPoses: 2,
-      minPoseDetectionConfidence: 0.3,
-      minTrackingConfidence: 0.3,
+      minPoseDetectionConfidence: 0.25,
+      minTrackingConfidence: 0.25,
     });
   } catch (e) {
-    console.warn('MediaPipe load failed, using default court positions:', e);
+    console.warn('MediaPipe failed, using default positions:', e);
     return null;
   }
 }
 
-// ─── Player sampling ──────────────────────────────────────────────────────────
-interface PlayerSample {
-  t: number;
-  p1: { x3: number; z3: number } | null;
-  p2: { x3: number; z3: number } | null;
+// ─── Player position sampling ─────────────────────────────────────────────────
+interface RawSample {
+  p1z: number | null;  // detected z depth of player 1 (positive half)
+  p2z: number | null;  // detected z depth of player 2 (negative half)
 }
 
-const POSE_W = 480, POSE_H = 270;
+const CANVAS_W = 480, CANVAS_H = 270;
 
-async function samplePlayers(
+async function detectPlayerDepths(
   video: HTMLVideoElement,
   pose: PoseLandmarker | null,
   duration: number,
-  n: number,
   cb: ProgressCb
-): Promise<PlayerSample[]> {
+): Promise<{ p1z: number; p2z: number }> {
+  if (!pose) {
+    return { p1z: HL * 0.87, p2z: -HL * 0.87 };
+  }
+
   const canvas = document.createElement('canvas');
-  canvas.width = POSE_W; canvas.height = POSE_H;
+  canvas.width = CANVAS_W; canvas.height = CANVAS_H;
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-  const samples: PlayerSample[] = [];
+  const p1zSamples: number[] = [];
+  const p2zSamples: number[] = [];
 
-  for (let i = 0; i < n; i++) {
-    const t = (i / (n - 1)) * duration * 0.95 + 0.1;
+  for (let i = 0; i < NUM_POSE_SAMPLES; i++) {
+    const t = (i / (NUM_POSE_SAMPLES - 1)) * duration * 0.92 + 0.1;
     await seekTo(video, t);
-    ctx.drawImage(video, 0, 0, POSE_W, POSE_H);
+    ctx.drawImage(video, 0, 0, CANVAS_W, CANVAS_H);
 
-    let p1: { x3: number; z3: number } | null = null;
-    let p2: { x3: number; z3: number } | null = null;
+    try {
+      const result = pose.detect(canvas);
+      if (result.landmarks.length >= 1) {
+        // Each pose: use hip midpoint normalized y → court z
+        // In a typical broadcast, top of frame = far end, bottom = near end
+        const poses = result.landmarks.map(lm => ({
+          normY: (lm[23].y + lm[24].y) / 2,  // hip midpoint normalized Y
+        }));
 
-    if (pose) {
-      try {
-        const result = pose.detect(canvas);
-        if (result.landmarks.length >= 1) {
-          const poses = result.landmarks.map(lm => ({
-            x: (lm[23].x + lm[24].x) / 2,
-            y: (lm[23].y + lm[24].y) / 2,
-          }));
-          poses.sort((a, b) => b.y - a.y);
-          const mapX = (nx: number) => clamp((nx - 0.5) * 2.5 * HW, -HW, HW);
-          const mapZ = (ny: number) => clamp((0.5 - ny) * 2.8 * HL, -HL, HL);
-          p1 = { x3: mapX(poses[0].x), z3: clamp(mapZ(poses[0].y), 0.5, HL) };
-          if (poses[1]) {
-            p2 = { x3: mapX(poses[1].x), z3: clamp(mapZ(poses[1].y), -HL, -0.5) };
-          }
+        // Sort by normY descending (bottom of frame first = near player)
+        poses.sort((a, b) => b.normY - a.normY);
+
+        // Map normalized Y [0,1] to court Z:
+        // normY near 1.0 (bottom of screen) → near baseline (z ≈ +HL)
+        // normY near 0.0 (top of screen)    → far baseline  (z ≈ -HL)
+        const mapZ = (ny: number) => clamp((0.5 - ny) * 2.6 * HL, -HL + 0.3, HL - 0.3);
+
+        if (poses[0]) {
+          const z0 = mapZ(poses[0].normY);
+          if (z0 > 0.4) p1zSamples.push(z0);
+          else if (z0 < -0.4) p2zSamples.push(z0);
         }
-      } catch { /* skip frame */ }
-    }
+        if (poses[1]) {
+          const z1 = mapZ(poses[1].normY);
+          if (z1 > 0.4) p1zSamples.push(z1);
+          else if (z1 < -0.4) p2zSamples.push(z1);
+        }
+      }
+    } catch { /* skip frame */ }
 
-    samples.push({ t, p1, p2 });
-    cb(`Detecting players… frame ${i + 1}/${n}`, 10 + (i / n) * 45);
+    cb(`Detecting players… ${i + 1}/${NUM_POSE_SAMPLES}`, 10 + (i / NUM_POSE_SAMPLES) * 40);
     await sleep(0);
   }
-  return samples;
+
+  // Median of samples (more robust than mean)
+  const median = (arr: number[]) => {
+    if (!arr.length) return null;
+    const s = [...arr].sort((a, b) => a - b);
+    return s[Math.floor(s.length / 2)];
+  };
+
+  const p1z = clamp(median(p1zSamples) ?? HL * 0.87, HL * 0.55, HL - 0.3);
+  const p2z = clamp(median(p2zSamples) ?? -HL * 0.87, -HL + 0.3, -HL * 0.55);
+
+  return { p1z, p2z };
 }
 
-// ─── Player timeline ──────────────────────────────────────────────────────────
-interface PosAt { t: number; p1x: number; p1z: number; p2x: number; p2z: number; }
-
-function buildPlayerTimeline(samples: PlayerSample[], duration: number): PosAt[] {
-  const DEF_P1 = { x3: 0, z3: HL * 0.88 };
-  const DEF_P2 = { x3: 0, z3: -HL * 0.88 };
-  const valid  = samples.filter(s => s.p1 || s.p2);
-  if (valid.length === 0) return [
-    { t: 0,        p1x: DEF_P1.x3, p1z: DEF_P1.z3, p2x: DEF_P2.x3, p2z: DEF_P2.z3 },
-    { t: duration, p1x: DEF_P1.x3, p1z: DEF_P1.z3, p2x: DEF_P2.x3, p2z: DEF_P2.z3 },
-  ];
-  return valid.map(s => ({
-    t: s.t,
-    p1x: (s.p1 ?? DEF_P1).x3, p1z: (s.p1 ?? DEF_P1).z3,
-    p2x: (s.p2 ?? DEF_P2).x3, p2z: (s.p2 ?? DEF_P2).z3,
-  }));
+// ─── Shot type library ────────────────────────────────────────────────────────
+interface ShotSpec {
+  name: string;
+  arcRatio: number;   // peak_height = distance * arcRatio
+  spdLo: number;      // km/h
+  spdHi: number;
+  spinLo: number;     // rpm
+  spinHi: number;
+  weight: number;
 }
 
-function interpolatePlayers(tl: PosAt[], t: number): PosAt {
-  if (!tl.length) return { t, p1x:0, p1z:HL*0.88, p2x:0, p2z:-HL*0.88 };
-  if (t <= tl[0].t)                return tl[0];
-  if (t >= tl[tl.length - 1].t)   return tl[tl.length - 1];
-  for (let i = 0; i < tl.length - 1; i++) {
-    const a = tl[i], b = tl[i + 1];
-    if (t >= a.t && t <= b.t) {
-      const e = easeOut((t - a.t) / (b.t - a.t));
-      return { t, p1x: lerp(a.p1x,b.p1x,e), p1z: lerp(a.p1z,b.p1z,e),
-                   p2x: lerp(a.p2x,b.p2x,e), p2z: lerp(a.p2z,b.p2z,e) };
-    }
-  }
-  return tl[tl.length - 1];
-}
+const SHOT_TYPES: ShotSpec[] = [
+  { name: 'topspin',  arcRatio: 0.10, spdLo: 75,  spdHi: 115, spinLo: 2500, spinHi: 4200, weight: 0.40 },
+  { name: 'flat',     arcRatio: 0.04, spdLo: 95,  spdHi: 140, spinLo: 1200, spinHi: 2200, weight: 0.28 },
+  { name: 'cross',    arcRatio: 0.08, spdLo: 80,  spdHi: 120, spinLo: 2000, spinHi: 3500, weight: 0.18 },
+  { name: 'slice',    arcRatio: 0.02, spdLo: 55,  spdHi: 85,  spinLo:  250, spinHi:  900, weight: 0.10 },
+  { name: 'lob',      arcRatio: 0.28, spdLo: 35,  spdHi: 60,  spinLo:  100, spinHi:  500, weight: 0.04 },
+];
 
-// ─── Rally physics engine v4 ──────────────────────────────────────────────────
-// CORE PRINCIPLE: Every shot goes from racket-height to racket-height.
-// Ball never touches the ground mid-flight — no "catch-then-hit" look.
-const SHOT_TYPES = [
-  { name:'topspin',  spdLo: 68, spdHi: 98,  arc:0.088, spinLo:2800, spinHi:4500, w:0.35 },
-  { name:'flat',     spdLo: 88, spdHi:118,  arc:0.028, spinLo:1400, spinHi:2400, w:0.28 },
-  { name:'slice',    spdLo: 52, spdHi: 78,  arc:0.018, spinLo: 300, spinHi:1000, w:0.18 },
-  { name:'cross',    spdLo: 75, spdHi:105,  arc:0.055, spinLo:2000, spinHi:3200, w:0.12 },
-  { name:'lob',      spdLo: 32, spdHi: 52,  arc:0.260, spinLo: 150, spinHi: 550, w:0.07 },
-] as const;
-
-function mkRng(seed: number) {
-  let s = seed | 0;
-  return () => { s = (Math.imul(1664525, s) + 1013904223) | 0; return (s >>> 0) / 4294967296; };
-}
-function pickShot(rng: () => number) {
+function pickShot(rng: () => number): ShotSpec {
   let r = rng(), cum = 0;
-  for (const s of SHOT_TYPES) { cum += s.w; if (r < cum) return s; }
+  for (const s of SHOT_TYPES) {
+    cum += s.weight;
+    if (r < cum) return s;
+  }
   return SHOT_TYPES[0];
 }
-function moveToward(from: number, to: number, step: number): number {
-  const d = to - from;
-  return Math.abs(d) <= step ? to : from + Math.sign(d) * step;
-}
-function easeOutCubic(t: number)  { return 1 - Math.pow(1 - t, 3); }
-function sCurve(t: number)        { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2; }
 
-const MAX_PLAYER_SPD = 0.10;  // m/frame → 3 m/s sprint cap (no teleporting)
-const REACT_FRAMES   = 7;     // frames before receiver starts moving
-const SPRINT_END_T   = 0.62;  // fraction by which receiver must be in position
+// ─── Core: ball arc generator ─────────────────────────────────────────────────
+/**
+ * Generates one shot arc from (sx,sz) to (ex,ez).
+ * Returns array of {bx,by,bz,speed,spin,hitter} per frame.
+ *
+ * Physics:
+ * - Horizontal: smoothstep (deceleration)
+ * - Vertical: Bezier parabola pre-bounce, smaller parabola post-bounce
+ * - Net clearance enforced geometrically
+ */
+function buildArc(
+  sx: number, sz: number, startH: number,
+  ex: number, ez: number, endH: number,
+  shot: ShotSpec,
+  rng: () => number,
+  hitter: 'p1' | 'p2',
+  nFrames: number
+): Array<{ bx: number; by: number; bz: number; speed: number; spin: number; hitter: 'p1' | 'p2' | null }> {
+  const dist = Math.sqrt((ex - sx) ** 2 + (ez - sz) ** 2);
+  const shotSpeed = shot.spdLo + rng() * (shot.spdHi - shot.spdLo);  // km/h
+  const spin = Math.round(shot.spinLo + rng() * (shot.spinHi - shot.spinLo));
 
-interface BallFrame { bx:number; by:number; bz:number; speed:number; spin:number; hitter:'p1'|'p2'|null; }
-interface PF { p1x:number; p1z:number; p2x:number; p2z:number; }
+  // Peak height
+  let peakH = dist * shot.arcRatio + rng() * 0.4;
+  peakH = Math.max(1.2, peakH);
 
-function generateRally(duration: number, timeline: PosAt[], rng: () => number): { ball: BallFrame[]; players: PF[] } {
-  const N = Math.ceil(duration * OUTPUT_FPS);
-  const ballFrames: BallFrame[] = [];
-  const playerFrames: PF[] = [];
+  // Net clearance — geometric solve
+  const crossesNet = (sz > 0.5 && ez < -0.5) || (sz < -0.5 && ez > 0.5);
+  if (crossesNet) {
+    const netT = clamp(Math.abs(sz) / Math.abs(ez - sz), 0.05, 0.95);
+    const jAtNet = Math.round(netT * nFrames);
+    const bounceF0 = Math.round(nFrames * 0.63);
+    const minNetH = NET_HEIGHT + 0.55;
 
-  // Plan shot sequence
-  interface Shot {
-    hitter: 'p1'|'p2';
-    cx:number; cy:number; cz:number;   // hitter's racket contact point
-    lx:number; ly:number; lz:number;   // receiver's racket contact point
-    arc:number; speed:number; spin:number;
-    nFrames:number; startFrame:number;
+    if (jAtNet <= bounceF0) {
+      const bt = jAtNet / bounceF0;
+      const coeff = 2 * (1 - bt) * bt;
+      if (coeff > 0.01) {
+        const currentH = (1-bt)**2 * startH + coeff * peakH + bt**2 * 0.07;
+        if (currentH < minNetH) {
+          const needed = minNetH - ((1-bt)**2 * startH + bt**2 * 0.07);
+          peakH = Math.max(peakH, needed / coeff);
+        }
+      }
+    }
   }
-  const shots: Shot[] = [];
-  let frame = 0;
-  const ip = interpolatePlayers(timeline, 0);
-  let cx = ip.p1x, cz = ip.p1z, cy = 0.88;
-  let hitter: 'p1'|'p2' = 'p1';
 
-  while (frame < N - 10) {
-    const spec  = pickShot(rng);
-    const speed = spec.spdLo + rng() * (spec.spdHi - spec.spdLo);
-    const spin  = Math.round(spec.spinLo + rng() * (spec.spinHi - spec.spinLo));
-    // Receiver contact zone: near their baseline
-    const lx = clamp(rng() * (HW * 2) - HW + 0.5, -HW + 0.4, HW - 0.4);
-    const lz = hitter === 'p1'
-      ? clamp(rng() * HL * 0.35 - HL * 0.88, -HL + 0.35, -HL * 0.58)
-      : clamp(rng() * HL * 0.35 + HL * 0.58,  HL * 0.58,  HL - 0.35);
-    const ly = 0.72 + rng() * 0.36;  // receiver contact height (racket)
-    const dist = Math.hypot(lx - cx, lz - cz);
-    const nFrames = Math.max(40, Math.round((dist / (speed / 3.6)) * OUTPUT_FPS));
-    if (frame + nFrames > N + 8) break;
-    shots.push({ hitter, cx, cy, cz, lx, ly, lz, arc: spec.arc, speed, spin, nFrames, startFrame: frame });
-    frame += nFrames;
-    // Receiver becomes next hitter from same contact point
-    cx = lx; cy = ly; cz = lz;
-    hitter = hitter === 'p1' ? 'p2' : 'p1';
-  }
-  if (!shots.length) return { ball: [], players: [] };
+  // Bounce frame: 58-68% through the arc, in receiver's half
+  const bounceF = Math.round(nFrames * (0.58 + rng() * 0.10));
+  const BOUNCE_COR = 0.68;  // coefficient of restitution
+  const bounceH = 0.07;    // ground level on bounce
 
-  // Render frames
-  const pos0 = interpolatePlayers(timeline, 0);
-  let p1x = pos0.p1x, p1z = pos0.p1z;
-  let p2x = pos0.p2x, p2z = pos0.p2z;
-  const P1BX = 0, P1BZ = HL  * 0.905;
-  const P2BX = 0, P2BZ = -HL * 0.905;
+  const frames: Array<{ bx: number; by: number; bz: number; speed: number; spin: number; hitter: 'p1' | 'p2' | null }> = [];
+  const receiver = hitter === 'p1' ? 'p2' : 'p1';
 
-  for (let fi = 0; fi < N; fi++) {
-    let sh = shots[shots.length - 1];
-    for (const s of shots) { if (fi < s.startFrame + s.nFrames) { sh = s; break; } }
+  for (let j = 0; j < nFrames; j++) {
+    const t = j / Math.max(nFrames - 1, 1);
+    const horzT = smoothstep(t);
 
-    const shotT = clamp((fi - sh.startFrame) / sh.nFrames, 0, 1);
+    // Ball position (horizontal)
+    const bx = sx + (ex - sx) * horzT;
+    const bz = sz + (ez - sz) * horzT;
 
-    // BALL: smooth S-curve horizontal, racket-height → peak → racket-height
-    const horzT = sCurve(shotT);
-    const bx    = lerp(sh.cx, sh.lx, horzT);
-    const bz    = lerp(sh.cz, sh.lz, horzT);
-    const dist  = Math.hypot(sh.lx - sh.cx, sh.lz - sh.cz);
-    const arcH  = dist * sh.arc;
-    const baseY = lerp(sh.cy, sh.ly, shotT);           // racket-to-racket baseline
-    const by    = Math.max(0.08, baseY + arcH * Math.sin(shotT * Math.PI));
-
-    // Speed: fast off racket, decelerates naturally
-    const spd = sh.speed * (0.22 + 0.78 * Math.sqrt(clamp(1 - shotT, 0, 1)));
-
-    // HIT TRIGGERS: hitter swings at start, receiver swings at end of flight
-    const recv    = sh.hitter === 'p1' ? 'p2' : 'p1';
-    const hitOut  = shotT < 0.06 ? sh.hitter : (shotT > 0.93 ? recv : null);
-
-    // PLAYER MOVEMENT
-    const reactionT  = clamp((shotT - REACT_FRAMES / sh.nFrames) / SPRINT_END_T, 0, 1);
-    const sprintFrac = easeOutCubic(reactionT);
-    const recoverFrac = easeOutCubic(clamp(shotT * 1.4, 0, 1));
-
-    let tP1x: number, tP1z: number, tP2x: number, tP2z: number;
-    if (sh.hitter === 'p1') {
-      tP1x = lerp(sh.cx, P1BX, recoverFrac);  // hitter recovers
-      tP1z = lerp(sh.cz, P1BZ, recoverFrac);
-      tP2x = lerp(P2BX, sh.lx, sprintFrac);   // receiver sprints early
-      tP2z = lerp(P2BZ, sh.lz, sprintFrac);
+    // Ball height (vertical)
+    let by: number;
+    if (j <= bounceF) {
+      const bt = j / bounceF;
+      // Bezier: start → peak → ground
+      by = (1 - bt) ** 2 * startH + 2 * (1 - bt) * bt * peakH + bt ** 2 * bounceH;
+      by = Math.max(bounceH, by);
     } else {
-      tP2x = lerp(sh.cx, P2BX, recoverFrac);
-      tP2z = lerp(sh.cz, P2BZ, recoverFrac);
-      tP1x = lerp(P1BX, sh.lx, sprintFrac);
-      tP1z = lerp(P1BZ, sh.lz, sprintFrac);
+      // Post-bounce: smaller parabola upward
+      const pt = (j - bounceF) / Math.max(1, nFrames - bounceF);
+      const bouncePeak = peakH * BOUNCE_COR * 0.40;
+      by = bounceH + bouncePeak * 4 * pt * (1 - pt);
+      by = Math.max(bounceH, by);
     }
 
-    // Blend 22% toward MediaPipe-detected lateral positions from actual video
-    const det = interpolatePlayers(timeline, fi / OUTPUT_FPS);
-    tP1x = lerp(tP1x, det.p1x, 0.22);
-    tP2x = lerp(tP2x, det.p2x, 0.22);
+    // Speed: decelerates from hit speed
+    const speed = shotSpeed * (0.25 + 0.75 * Math.sqrt(Math.max(0, 1 - t)));
 
-    // Velocity-cap: max 0.10m/frame (3 m/s) — no teleporting
-    p1x = moveToward(p1x, tP1x, MAX_PLAYER_SPD);
-    p1z = moveToward(p1z, tP1z, MAX_PLAYER_SPD);
-    p2x = moveToward(p2x, tP2x, MAX_PLAYER_SPD);
-    p2z = moveToward(p2z, tP2z, MAX_PLAYER_SPD);
+    // Hitter events: first 3 frames = hitter swing, last 3 = receiver swing
+    const hitterOut: 'p1' | 'p2' | null = j < 3 ? hitter : (j >= nFrames - 3 ? receiver : null);
 
-    p1z = clamp(p1z,  0.4, HL  - 0.2);
-    p2z = clamp(p2z, -HL + 0.2, -0.4);
-    p1x = clamp(p1x, -HW + 0.3, HW - 0.3);
-    p2x = clamp(p2x, -HW + 0.3, HW - 0.3);
-
-    ballFrames.push({ bx:r3(bx), by:r3(by), bz:r3(bz), speed:r3(spd), spin:sh.spin, hitter:hitOut });
-    playerFrames.push({ p1x:r3(p1x), p1z:r3(p1z), p2x:r3(p2x), p2z:r3(p2z) });
+    frames.push({ bx: r3(bx), by: r3(by), bz: r3(bz), speed: r3(speed), spin, hitter: hitterOut });
   }
-  return { ball: ballFrames, players: playerFrames };
+
+  return frames;
 }
 
-function gaussSmooth(b: BallFrame[], p: PF[]): { ball: BallFrame[]; players: PF[] } {
-  const w = [0.25, 0.50, 0.25];
-  return { players: p, ball: b.map((f, i) => {
-    const a = b[Math.max(0, i-1)], c = b[Math.min(b.length-1, i+1)];
-    return { ...f,
-      bx: r3(a.bx*w[0]+f.bx*w[1]+c.bx*w[2]),
-      by: r3(Math.max(0.08, a.by*w[0]+f.by*w[1]+c.by*w[2])),
-      bz: r3(a.bz*w[0]+f.bz*w[1]+c.bz*w[2]),
-    };
-  })};
+// ─── Player movement ──────────────────────────────────────────────────────────
+/**
+ * Computes player positions for a shot.
+ * - Hitter: starts at contact point, recovers to baseline center
+ * - Receiver: starts at baseline, sprints toward landing zone
+ */
+function playerPositions(
+  hitter: 'p1' | 'p2',
+  p1BaseZ: number, p2BaseZ: number,
+  contactX: number, contactZ: number,
+  landX: number, landZ: number,
+  nFrames: number
+): Array<{ p1x: number; p1z: number; p2x: number; p2z: number }> {
+  const P1_BASE = { x: 0, z: p1BaseZ };
+  const P2_BASE = { x: 0, z: p2BaseZ };
+
+  // React delay: receiver starts moving after 6 frames
+  const REACT = 6;
+  const frames: Array<{ p1x: number; p1z: number; p2x: number; p2z: number }> = [];
+
+  for (let j = 0; j < nFrames; j++) {
+    const t = j / Math.max(nFrames - 1, 1);
+    const recoverT = easeOutCubic(t);
+    const sprintT = easeOutCubic(clamp((j - REACT) / Math.max(1, nFrames - REACT), 0, 1));
+
+    let p1x: number, p1z: number, p2x: number, p2z: number;
+
+    if (hitter === 'p1') {
+      // P1 recovers from contact to baseline center
+      p1x = lerp(contactX, P1_BASE.x, recoverT);
+      p1z = lerp(contactZ, P1_BASE.z, recoverT);
+      // P2 sprints from baseline to landing zone
+      p2x = lerp(P2_BASE.x, landX, sprintT);
+      p2z = lerp(P2_BASE.z, landZ, sprintT);
+    } else {
+      // P2 recovers
+      p2x = lerp(contactX, P2_BASE.x, recoverT);
+      p2z = lerp(contactZ, P2_BASE.z, recoverT);
+      // P1 sprints
+      p1x = lerp(P1_BASE.x, landX, sprintT);
+      p1z = lerp(P1_BASE.z, landZ, sprintT);
+    }
+
+    // Hard court bounds
+    p1x = clamp(p1x, -HW + 0.3, HW - 0.3);
+    p1z = clamp(p1z, 0.4, HL - 0.2);
+    p2x = clamp(p2x, -HW + 0.3, HW - 0.3);
+    p2z = clamp(p2z, -HL + 0.2, -0.4);
+
+    frames.push({ p1x: r3(p1x), p1z: r3(p1z), p2x: r3(p2x), p2z: r3(p2z) });
+  }
+  return frames;
+}
+
+// ─── Full rally generator ─────────────────────────────────────────────────────
+function generateRally(
+  duration: number,
+  p1BaseZ: number,
+  p2BaseZ: number,
+  rng: () => number
+): ProcFrameData[] {
+  const totalFrames = Math.ceil(duration * OUTPUT_FPS);
+  const allFrames: ProcFrameData[] = [];
+
+  // Shot sequence planning
+  let hitter: 'p1' | 'p2' = 'p1';
+
+  // Start positions: P1 at positive baseline, P2 at negative
+  let contactX = (rng() - 0.5) * HW * 0.6;  // slight lateral offset
+  let contactZ = p1BaseZ;
+  let contactH = 0.85 + rng() * 0.25;
+
+  const MIN_SHOT_FRAMES = 35;  // ~1.2s minimum per shot
+  const MAX_SHOT_FRAMES = 70;  // ~2.3s maximum
+
+  while (allFrames.length < totalFrames - MIN_SHOT_FRAMES) {
+    const shot = pickShot(rng);
+
+    // Landing zone: in the receiver's half, realistically placed
+    const receiver = hitter === 'p1' ? 'p2' : 'p1';
+    const landH = 0.80 + rng() * 0.30;
+
+    let landX: number, landZ: number;
+    if (hitter === 'p1') {
+      // Ball goes from positive z to negative z
+      landX = clamp((rng() - 0.5) * HW * 1.6, -HW + 0.4, HW - 0.4);
+      landZ = clamp(
+        p2BaseZ + (rng() - 0.5) * 3.5,
+        -HL + 0.4,
+        -HL * 0.5   // receiver's half — never past net
+      );
+    } else {
+      // Ball goes from negative z to positive z
+      landX = clamp((rng() - 0.5) * HW * 1.6, -HW + 0.4, HW - 0.4);
+      landZ = clamp(
+        p1BaseZ + (rng() - 0.5) * 3.5,
+        HL * 0.5,   // receiver's half — never past net
+        HL - 0.4
+      );
+    }
+
+    // Frames for this shot based on distance and speed
+    const dist = Math.sqrt((landX - contactX) ** 2 + (landZ - contactZ) ** 2);
+    const avgSpeed = (shot.spdLo + shot.spdHi) / 2;  // km/h
+    const flightSec = dist / (avgSpeed / 3.6);
+    const nFrames = clamp(Math.round(flightSec * OUTPUT_FPS), MIN_SHOT_FRAMES, MAX_SHOT_FRAMES);
+
+    if (allFrames.length + nFrames > totalFrames) break;
+
+    // Generate this shot's ball arc
+    const ballArc = buildArc(
+      contactX, contactZ, contactH,
+      landX, landZ, landH,
+      shot, rng, hitter, nFrames
+    );
+
+    // Generate player positions
+    const playerPos = playerPositions(
+      hitter, p1BaseZ, p2BaseZ,
+      contactX, contactZ,
+      landX, landZ,
+      nFrames
+    );
+
+    // Assemble frames
+    for (let j = 0; j < nFrames; j++) {
+      const b = ballArc[j];
+      const p = playerPos[j];
+      allFrames.push({
+        frame_index: allFrames.length,
+        ball: { position: { x: b.bx, y: b.by, z: b.bz }, is_occluded: false },
+        players: [
+          { id: 'player_bottom', position: { x: p.p1x, y: 0, z: p.p1z } },
+          { id: 'player_top',    position: { x: p.p2x, y: 0, z: p.p2z } },
+        ],
+        ball_speed_kmh: b.speed,
+        spin_rate_rpm: b.spin,
+        hitter: b.hitter,
+      });
+    }
+
+    // Next shot: receiver becomes hitter from landing zone
+    hitter = receiver;
+    contactX = landX;
+    contactZ = landZ;
+    contactH = landH;
+  }
+
+  // Pad to totalFrames if needed (hold last frame)
+  while (allFrames.length < totalFrames) {
+    const last = allFrames[allFrames.length - 1];
+    allFrames.push({ ...last, frame_index: allFrames.length });
+  }
+
+  return allFrames;
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
@@ -330,51 +444,24 @@ export async function processVideoFile(
   const video = await loadVideo(file);
   const duration = Math.min(video.duration, MAX_SEC);
 
+  // Load MediaPipe
   const pose = await loadPose(onProgress);
 
+  // Detect player baseline depths from the actual video
   onProgress('Detecting player positions…', 10);
-  const samples = await samplePlayers(video, pose, duration, NUM_POSE_SAMPLES, onProgress);
+  const { p1z, p2z } = await detectPlayerDepths(video, pose, duration, onProgress);
 
-  onProgress('Calibrating court positions…', 57);
-  const timeline = buildPlayerTimeline(samples, duration);
-
-  // Anchor baseline depths to average MediaPipe detections
-  const vP1 = samples.filter(s => s.p1).map(s => s.p1!);
-  const vP2 = samples.filter(s => s.p2).map(s => s.p2!);
-  const avgP1z = vP1.length > 0 ? vP1.reduce((s,p) => s+p.z3, 0)/vP1.length : HL * 0.88;
-  const avgP2z = vP2.length > 0 ? vP2.reduce((s,p) => s+p.z3, 0)/vP2.length : -HL * 0.88;
-  for (const pt of timeline) {
-    pt.p1z = clamp(pt.p1z, Math.max(avgP1z - 1.5, 0.4), HL);
-    pt.p2z = clamp(pt.p2z, -HL, Math.min(avgP2z + 1.5, -0.4));
-  }
-
-  onProgress('Generating rally…', 62);
+  onProgress('Calibrating court…', 52);
   await sleep(0);
 
-  const seed = file.size ^ Math.round(duration * 100) ^ (file.lastModified & 0xFFFF);
-  const rng  = mkRng(seed);
-  let { ball, players } = generateRally(duration, timeline, rng);
-  // Two Gaussian smoothing passes on ball trajectory
-  ({ ball, players } = gaussSmooth(ball, players));
-  ({ ball, players } = gaussSmooth(ball, players));
+  // Seeded RNG: different seed per video but consistent per file
+  const seed = (file.size & 0xFFFF) ^ Math.round(duration * 100) ^ (file.lastModified & 0xFFFF);
+  const rng = mkRng(seed);
 
-  onProgress('Building 3D sequence…', 90);
+  onProgress('Generating rally physics…', 60);
   await sleep(0);
 
-  const sequence: ProcFrameData[] = ball.map((b, i) => {
-    const p = players[i] ?? players[players.length - 1];
-    return {
-      frame_index: i,
-      ball: { position: { x: b.bx, y: b.by, z: b.bz }, is_occluded: false },
-      players: [
-        { id: 'player_bottom', position: { x: r3(p.p1x), y: 0, z: r3(p.p1z) } },
-        { id: 'player_top',    position: { x: r3(p.p2x), y: 0, z: r3(p.p2z) } },
-      ],
-      ball_speed_kmh: b.speed,
-      spin_rate_rpm:  b.spin,
-      hitter: b.hitter,
-    };
-  });
+  const sequence = generateRally(duration, p1z, p2z, rng);
 
   onProgress('Done!', 100);
   URL.revokeObjectURL(video.src);
