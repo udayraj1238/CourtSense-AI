@@ -1,12 +1,14 @@
 import type { ProcFrameData, Coordinate } from '../types/tracking';
 
 /**
- * Applies smoothing and gap-filling to the raw tracking sequence from the backend.
- * 1. Fills missing ball positions (gaps <= 20 frames) using linear interpolation
- *    (in future could use cubic spline).
- * 2. Applies a simple moving average (SMA) or exponential moving average (EMA)
- *    to ball and player coordinates to reduce high-frequency jitter.
- * 3. Rejects unrealistic jumps (jitter gate).
+ * Applies minimal smoothing to tracking sequences.
+ *
+ * KEY PRINCIPLE: The videoProcessor already generates physics-simulated positions.
+ * We must NOT apply heavy EMA smoothing — it kills all ball movement.
+ * Only do:
+ *   1. Fill occluded gaps via linear interpolation (backend data only)
+ *   2. Very light ball smoothing (3-tap Gaussian) to remove any single-frame spikes
+ *   3. NaN/undefined guard for player positions
  */
 export function smoothSequence(raw: ProcFrameData[]): ProcFrameData[] {
   if (raw.length === 0) return [];
@@ -14,9 +16,31 @@ export function smoothSequence(raw: ProcFrameData[]): ProcFrameData[] {
   // Deep clone to avoid mutating the original
   const seq: ProcFrameData[] = JSON.parse(JSON.stringify(raw));
 
-  fillBallGaps(seq, 20); // Gap fill up to 20 frames
+  // 1. Guard against NaN/undefined in player positions
+  sanitizePlayers(seq);
+
+  // 2. Fill occluded ball gaps (backend data only — synthesized data has none)
+  fillBallGaps(seq, 20);
+
+  // 3. Very light 3-tap Gaussian on ball position (only when data has jitter)
+  //    alpha=0.85 means we keep 85% of the real value — almost no damping
+  lightSmoothBall(seq);
 
   return seq;
+}
+
+function sanitizePlayers(seq: ProcFrameData[]) {
+  const DEF_P1 = { x: 0, y: 0, z: 10 };
+  const DEF_P2 = { x: 0, y: 0, z: -10 };
+
+  for (const frame of seq) {
+    for (const player of frame.players) {
+      const p = player.position;
+      if (!isFinite(p.x) || p.x === undefined) p.x = player.id.includes('bottom') ? DEF_P1.x : DEF_P2.x;
+      if (!isFinite(p.y) || p.y === undefined) p.y = 0;
+      if (!isFinite(p.z) || p.z === undefined) p.z = player.id.includes('bottom') ? DEF_P1.z : DEF_P2.z;
+    }
+  }
 }
 
 function fillBallGaps(seq: ProcFrameData[], maxGap: number) {
@@ -33,21 +57,17 @@ function fillBallGaps(seq: ProcFrameData[], maxGap: number) {
 
       if (gapLen > 0 && gapLen <= maxGap) {
         if (gapStart === 0) {
-          // No previous frame to interpolate from — just copy the end position
           const endPos = seq[gapEnd].ball.position;
           for (let j = gapStart; j < gapEnd; j++) {
             seq[j].ball.position = { ...endPos };
           }
         } else {
-          // Interpolate between gapStart - 1 and gapEnd
           const startIdx = gapStart - 1;
           const startPos = seq[startIdx].ball.position;
           const endPos = seq[gapEnd].ball.position;
-
           for (let j = gapStart; j < gapEnd; j++) {
             const t = (j - startIdx) / (gapEnd - startIdx);
             seq[j].ball.position = lerp3D(startPos, endPos, t);
-            // Keep is_occluded = true so the frontend knows it was predicted
           }
         }
       }
@@ -55,77 +75,38 @@ function fillBallGaps(seq: ProcFrameData[], maxGap: number) {
     }
   }
 
-  // Handle gap at the end
   if (gapStart !== -1 && gapStart > 0) {
     const lastValidPos = seq[gapStart - 1].ball.position;
     for (let j = gapStart; j < seq.length; j++) {
-      seq[j].ball.position = { ...lastValidPos }; // Just hold last position
+      seq[j].ball.position = { ...lastValidPos };
     }
   }
 }
 
-function applyEMA(seq: ProcFrameData[], alpha: number) {
-  if (seq.length < 2) return;
-
-  let prevBall = { ...seq[0].ball.position };
-  const p1Found = seq[0].players.find(p => p.id.includes('bottom'));
-  let prevP1: Coordinate = p1Found?.position ?? { x: 0, y: 0, z: 10 };
-  
-  const p2Found = seq[0].players.find(p => p.id.includes('top'));
-  let prevP2: Coordinate = p2Found?.position ?? { x: 0, y: 0, z: -10 };
-
-  for (let i = 1; i < seq.length; i++) {
-    // Ball
-    const bPos = seq[i].ball.position;
-    bPos.x = prevBall.x + alpha * (bPos.x - prevBall.x);
-    bPos.y = prevBall.y + alpha * (bPos.y - prevBall.y);
-    bPos.z = prevBall.z + alpha * (bPos.z - prevBall.z);
-    prevBall = { ...bPos };
-
-    // Players
-    for (const player of seq[i].players) {
-      if (player.id.includes('bottom')) {
-        player.position.x = prevP1.x + alpha * (player.position.x - prevP1.x);
-        player.position.z = prevP1.z + alpha * (player.position.z - prevP1.z);
-        prevP1 = { ...player.position };
-      } else if (player.id.includes('top')) {
-        player.position.x = prevP2.x + alpha * (player.position.x - prevP2.x);
-        player.position.z = prevP2.z + alpha * (player.position.z - prevP2.z);
-        prevP2 = { ...player.position };
-      }
-    }
+function lightSmoothBall(seq: ProcFrameData[]) {
+  // Only smooth if we detect any high-frequency jitter (backend YOLO data)
+  // Check variance across first 10 frames
+  let hasJitter = false;
+  for (let i = 1; i < Math.min(10, seq.length); i++) {
+    const dz = Math.abs(seq[i].ball.position.z - seq[i-1].ball.position.z);
+    if (dz > 1.5) { hasJitter = true; break; } // >1.5m/frame = noise
   }
-}
+  if (!hasJitter) return; // synthesized data is already smooth — skip
 
-function applyJitterGate(seq: ProcFrameData[], maxDeltaMeters: number) {
-  if (seq.length < 2) return;
-
-  const p1Found = seq[0].players.find(p => p.id.includes('bottom'));
-  let prevP1: Coordinate = p1Found?.position ?? { x: 0, y: 0, z: 10 };
-  
-  const p2Found = seq[0].players.find(p => p.id.includes('top'));
-  let prevP2: Coordinate = p2Found?.position ?? { x: 0, y: 0, z: -10 };
-
-  for (let i = 1; i < seq.length; i++) {
-    for (const player of seq[i].players) {
-      if (player.id.includes('bottom') && prevP1) {
-        if (Math.abs(player.position.x - prevP1.x) > maxDeltaMeters ||
-            Math.abs(player.position.z - prevP1.z) > maxDeltaMeters) {
-          player.position.x = prevP1.x;
-          player.position.z = prevP1.z;
-        } else {
-          prevP1 = { ...player.position };
-        }
-      } else if (player.id.includes('top') && prevP2) {
-        if (Math.abs(player.position.x - prevP2.x) > maxDeltaMeters ||
-            Math.abs(player.position.z - prevP2.z) > maxDeltaMeters) {
-          player.position.x = prevP2.x;
-          player.position.z = prevP2.z;
-        } else {
-          prevP2 = { ...player.position };
-        }
-      }
-    }
+  // 3-tap Gaussian: weights [0.15, 0.70, 0.15]
+  const smoothed = seq.map((f, i) => ({ ...f.ball.position }));
+  for (let i = 1; i < seq.length - 1; i++) {
+    const a = seq[i-1].ball.position;
+    const b = seq[i].ball.position;
+    const c = seq[i+1].ball.position;
+    smoothed[i] = {
+      x: a.x * 0.15 + b.x * 0.70 + c.x * 0.15,
+      y: Math.max(0.05, a.y * 0.15 + b.y * 0.70 + c.y * 0.15),
+      z: a.z * 0.15 + b.z * 0.70 + c.z * 0.15,
+    };
+  }
+  for (let i = 0; i < seq.length; i++) {
+    seq[i].ball.position = smoothed[i];
   }
 }
 
