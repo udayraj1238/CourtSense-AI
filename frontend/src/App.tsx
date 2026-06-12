@@ -4,6 +4,7 @@ import { CalibrationOverlay } from './components/CalibrationOverlay';
 import { ToastContainer, useToast } from './components/Toast';
 import { AnalyticsSidebar } from './components/AnalyticsSidebar';
 import { HeatmapOverlay } from './components/HeatmapOverlay';
+import { RadarMinimap } from './components/RadarMinimap';
 import { processVideoFile } from './utils/videoProcessor';
 import { compressVideo } from './utils/videoCompressor';
 import { uploadVideo, getJobPreviewUrl, submitCalibration } from './utils/apiClient';
@@ -84,6 +85,13 @@ function App() {
   const [p2Hitting, setP2Hitting] = useState(false);
   const hittingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Match Analytics States
+  const [statsArr, setStatsArr] = useState<{d1:number, d2:number, hits:number}[]>([]);
+  const [currentDistP1, setCurrentDistP1] = useState(0);
+  const [currentDistP2, setCurrentDistP2] = useState(0);
+  const [currentHits, setCurrentHits] = useState(0);
+  const [shotHistory, setShotHistory] = useState<{frame:number, hitter:string, speed:number}[]>([]);
+
   // Client-side processing progress
   const [processingLabel, setProcessingLabel] = useState('');
   const [processingPct, setProcessingPct] = useState(0);
@@ -144,6 +152,7 @@ function App() {
         heatRef.current = []; trailRef.current = [];
         frameRef.current = 0; setFrame(0);
         setBallTrail([]); setHeatmapData([]);
+        precomputeStats(data.sequence);
         if (data.sequence.length > 0) updatePositions(data.sequence[0]);
         setAppState('ready'); setIsPlaying(true);
         addToast(`Demo loaded — ${data.sequence.length} frames!`, 'success');
@@ -159,11 +168,56 @@ function App() {
   const applySequence = useCallback((sequence: FrameData[], toastMsg: string) => {
     const smoothed = smoothSequence(sequence);
     setSequenceData(smoothed);
+    precomputeStats(smoothed);
     if (smoothed.length > 0) updatePositions(smoothed[0]);
     setAppState('ready');
     setIsPlaying(true);
     addToast(toastMsg, 'success');
   }, [updatePositions, addToast]);
+
+  const precomputeStats = useCallback((seq: FrameData[]) => {
+    const newStats = [];
+    const shots: {frame:number, hitter:string, speed:number}[] = [];
+    let d1 = 0, d2 = 0, hits = 0;
+    let lastP1 = null, lastP2 = null, lastHitter = null;
+    
+    for (const [idx, fd] of seq.entries()) {
+      let p1Pos = null;
+      let p2Pos = null;
+      for (const player of fd.players) {
+        if (player.id.includes('bottom')) p1Pos = player.position;
+        else if (player.id.includes('top')) p2Pos = player.position;
+      }
+      
+      if (p1Pos && lastP1) {
+         d1 += Math.hypot(p1Pos.x - lastP1.x, p1Pos.z - lastP1.z);
+      }
+      if (p2Pos && lastP2) {
+         d2 += Math.hypot(p2Pos.x - lastP2.x, p2Pos.z - lastP2.z);
+      }
+      if (p1Pos) lastP1 = p1Pos;
+      if (p2Pos) lastP2 = p2Pos;
+      
+      // Wait for hit transition
+      if (fd.hitter && fd.hitter !== lastHitter) {
+         hits += 1;
+         shots.push({ frame: idx, hitter: fd.hitter, speed: fd.ball_speed_kmh || 0 });
+         lastHitter = fd.hitter;
+      } else if (!fd.hitter && lastHitter) {
+         // Reset hitter when null so next hit is counted
+         lastHitter = null;
+      }
+      newStats.push({ d1, d2, hits });
+    }
+    setStatsArr(newStats);
+    setShotHistory(shots);
+    
+    if (newStats.length > 0) {
+      setCurrentDistP1(newStats[0].d1);
+      setCurrentDistP2(newStats[0].d2);
+      setCurrentHits(newStats[0].hits);
+    }
+  }, []);
 
   const pollServerJob = useCallback(async (jobId: string) => {
     return pollJobUntilComplete(jobId, (label, pct, status) => {
@@ -297,6 +351,13 @@ function App() {
           frameRef.current = next;
           setFrame(next);
           updatePositions(sequenceData[next]);
+          
+          if (statsArr[next]) {
+            setCurrentDistP1(statsArr[next].d1);
+            setCurrentDistP2(statsArr[next].d2);
+            setCurrentHits(statsArr[next].hits);
+          }
+          
           lastTime = time - (dt % interval);
         }
       }
@@ -329,10 +390,17 @@ function App() {
     frameRef.current = 0; setFrame(0);
     trailRef.current = []; setBallTrail([]);
     heatRef.current = []; setHeatmapData([]);
-    if (sequenceData.length > 0) updatePositions(sequenceData[0]);
-  };
+    if (sequenceData.length > 0) {
+       updatePositions(sequenceData[0]);
+       if (statsArr[0]) {
+         setCurrentDistP1(statsArr[0].d1);
+         setCurrentDistP2(statsArr[0].d2);
+         setCurrentHits(statsArr[0].hits);
+       }
+    }
+  }, [sequenceData, statsArr, updatePositions]);
 
-  const seekToFrame = (target: number) => {
+  const seekToFrame = useCallback((target: number) => {
     const c = Math.max(0, Math.min(target, sequenceData.length - 1));
     frameRef.current = c; setFrame(c);
     const start = Math.max(0, c - TRAIL_LENGTH);
@@ -343,7 +411,12 @@ function App() {
     }
     trailRef.current = trail; setBallTrail([...trail]);
     updatePositions(sequenceData[c]);
-  };
+    if (statsArr[c]) {
+      setCurrentDistP1(statsArr[c].d1);
+      setCurrentDistP2(statsArr[c].d2);
+      setCurrentHits(statsArr[c].hits);
+    }
+  }, [sequenceData, statsArr, updatePositions]);
 
   /* --- Timeline drag --- */
   const getFrameFromEvent = (e: MouseEvent | React.MouseEvent) => {
@@ -641,7 +714,16 @@ function App() {
         totalFrames={totalFrames}
         isPlaying={isPlaying}
         isServerAnalysis={useServerAnalysis}
+        distP1={currentDistP1}
+        distP2={currentDistP2}
+        rallyHits={currentHits}
+        shotHistory={shotHistory}
+        onSeek={seekToFrame}
+        setIsPlaying={setIsPlaying}
       />
+
+      {/* Minimap */}
+      <RadarMinimap ballPos={ballPos} p1Pos={p1Pos} p2Pos={p2Pos} />
 
       {/* 3D Canvas */}
       <main style={{ flex: 1 }}>

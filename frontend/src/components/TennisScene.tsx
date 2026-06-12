@@ -6,6 +6,7 @@ import { Stadium } from './Stadium';
 import { Ball } from './Ball';
 import { BallTrail } from './BallTrail';
 import { Player } from './Player';
+import { HitRipple } from './HitRipple';
 import { Effects } from './Effects';
 import * as THREE from 'three';
 
@@ -18,6 +19,7 @@ interface TennisSceneProps {
   cameraPreset?: 'default' | 'overhead' | 'p1' | 'p2';
   p1Hitting?: boolean;
   p2Hitting?: boolean;
+  isBouncing?: boolean;
 }
 
 const CAMERA_TARGETS: Record<string, [number, number, number]> = {
@@ -54,6 +56,7 @@ export const TennisScene: React.FC<TennisSceneProps> = React.memo(({
   cameraPreset = 'default',
   p1Hitting = false,
   p2Hitting = false,
+  isBouncing = false,
 }) => {
   const initPos = CAMERA_TARGETS[cameraPreset] ?? CAMERA_TARGETS.default;
 
@@ -129,6 +132,9 @@ export const TennisScene: React.FC<TennisSceneProps> = React.memo(({
         {/* Players */}
         <Player position={player1Pos} color="#4f9aff" accentColor="#1e3a6e" side="bottom" label="Player 1" isHitting={p1Hitting} />
         <Player position={player2Pos} color="#ff5a6e" accentColor="#7f1d2e" side="top"    label="Player 2" isHitting={p2Hitting} />
+
+        {/* Visual Hit/Bounce Indicators */}
+        <HitRipple isHitting={p1Hitting || p2Hitting || isBouncing} position={ballPos} color={isBouncing ? "#ffffff" : "#c8e600"} />
 
         {/* Post-processing */}
         <Effects />

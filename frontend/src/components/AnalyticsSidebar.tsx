@@ -8,6 +8,12 @@ interface AnalyticsSidebarProps {
   totalFrames: number;
   isPlaying: boolean;
   isServerAnalysis: boolean;
+  distP1?: number;
+  distP2?: number;
+  rallyHits?: number;
+  shotHistory?: {frame:number, hitter:string, speed:number}[];
+  onSeek?: (frame: number) => void;
+  setIsPlaying?: (playing: boolean) => void;
 }
 
 /* Radial Speed Gauge */
@@ -196,8 +202,97 @@ function MiniTimeline({ frame, total }: { frame: number; total: number }) {
   );
 }
 
+/* Match Stats Card */
+function MatchStats({ distP1 = 0, distP2 = 0, rallyHits = 0, avgSpeed = 0 }: { distP1?: number, distP2?: number, rallyHits?: number, avgSpeed?: number }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
+      <div style={{
+        fontSize: '9px', fontWeight: 700, letterSpacing: '0.12em',
+        textTransform: 'uppercase', color: 'var(--text-muted)',
+        display: 'flex', alignItems: 'center', gap: '5px',
+        marginBottom: '2px'
+      }}>
+        <Activity size={9} />
+        Match Stats
+      </div>
+      
+      {/* Rally Length */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Rally Hits</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', fontWeight: 700, color: 'var(--accent)' }}>
+          {rallyHits}
+        </span>
+      </div>
+
+      {/* Distance P1 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Player 1 Run</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 600, color: '#fff' }}>
+          {distP1.toFixed(1)} <span style={{ fontSize: '8px', color: 'var(--text-muted)' }}>m</span>
+        </span>
+      </div>
+
+      {/* Average Shot Speed */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Avg Speed</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 600, color: '#fff' }}>
+          {avgSpeed.toFixed(0)} <span style={{ fontSize: '8px', color: 'var(--text-muted)' }}>km/h</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* Shot History Card */
+function ShotHistoryCard({ shots, onSeek, setIsPlaying, currentFrame }: { shots: {frame:number, hitter:string, speed:number}[], onSeek: (f:number)=>void, setIsPlaying: (b:boolean)=>void, currentFrame: number }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
+      <div style={{
+        fontSize: '9px', fontWeight: 700, letterSpacing: '0.12em',
+        textTransform: 'uppercase', color: 'var(--text-muted)',
+        display: 'flex', alignItems: 'center', gap: '5px',
+        marginBottom: '2px'
+      }}>
+        <Activity size={9} />
+        Shot History
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '120px', overflowY: 'auto', paddingRight: '4px' }}>
+        {shots.map((shot, idx) => {
+          const isP1 = shot.hitter.includes('bottom') || shot.hitter === 'p1';
+          const color = isP1 ? 'var(--cyan)' : 'var(--rose)';
+          const label = isP1 ? 'P1' : 'P2';
+          const isPassed = currentFrame >= shot.frame;
+          return (
+            <div 
+              key={idx} 
+              onClick={() => { setIsPlaying(false); onSeek(shot.frame); }}
+              style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                padding: '4px 6px',
+                background: isPassed ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.02)',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                borderLeft: `2px solid ${color}`,
+                transition: 'background 0.2s',
+              }}
+            >
+              <span style={{ fontSize: '9px', color: '#fff', fontWeight: 600 }}>{label}</span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--accent)' }}>
+                {shot.speed.toFixed(0)} <span style={{ fontSize: '7px', color: 'var(--text-muted)' }}>km/h</span>
+              </span>
+            </div>
+          );
+        })}
+        {shots.length === 0 && (
+          <div style={{ fontSize: '9px', color: 'var(--text-muted)', textAlign: 'center', padding: '10px 0' }}>No shots yet</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export const AnalyticsSidebar: React.FC<AnalyticsSidebarProps> = React.memo(({
-  ballSpeed, spinRate, frame, totalFrames, isServerAnalysis
+  ballSpeed, spinRate, frame, totalFrames, isServerAnalysis, distP1, distP2, rallyHits, shotHistory = [], onSeek = ()=>{}, setIsPlaying = ()=>{}
 }) => {
   const classifySpeed = useMemo(() => {
     if (ballSpeed > 180) return { label: 'Smash', color: 'var(--rose)' };
@@ -220,7 +315,7 @@ export const AnalyticsSidebar: React.FC<AnalyticsSidebarProps> = React.memo(({
       alignItems: 'center',
       animation: 'slide-in-right 0.5s var(--ease-out-expo) 0.3s forwards',
       opacity: 0,
-      width: '106px',
+      width: '130px',
     }}>
       {/* Speed Gauge card */}
       <div style={{
@@ -282,6 +377,33 @@ export const AnalyticsSidebar: React.FC<AnalyticsSidebarProps> = React.memo(({
         width: '100%',
       }}>
         <MiniTimeline frame={frame} total={totalFrames} />
+      </div>
+
+      {/* Match Stats card */}
+      <div style={{
+        background: 'var(--bg-glass-heavy)',
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        border: '1px solid var(--border-light)',
+        borderRadius: '14px',
+        padding: '12px',
+        width: '100%',
+      }}>
+        {/* Pass shotHistory to calculate average speed */}
+        <MatchStats distP1={distP1} distP2={distP2} rallyHits={rallyHits} avgSpeed={shotHistory.length ? shotHistory.reduce((a,b)=>a+b.speed,0)/shotHistory.length : 0} />
+      </div>
+
+      {/* Shot History card */}
+      <div style={{
+        background: 'var(--bg-glass-heavy)',
+        backdropFilter: 'blur(24px)',
+        WebkitBackdropFilter: 'blur(24px)',
+        border: '1px solid var(--border-light)',
+        borderRadius: '14px',
+        padding: '12px',
+        width: '100%',
+      }}>
+        <ShotHistoryCard shots={shotHistory} onSeek={onSeek} setIsPlaying={setIsPlaying} currentFrame={frame} />
       </div>
     </div>
   );
