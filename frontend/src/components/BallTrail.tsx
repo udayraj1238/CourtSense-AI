@@ -15,7 +15,7 @@ const MAX_TRAIL = 20;
 export const BallTrail: React.FC<BallTrailProps> = React.memo(({ positions }) => {
   const lineRef = useRef<THREE.Line>(null);
 
-  const { geometry, posAttr, colorAttr, material, line } = useMemo(() => {
+  const { geometry, posAttr, colorAttr, line } = useMemo(() => {
     const geo = new THREE.BufferGeometry();
     const posAttr   = new THREE.BufferAttribute(new Float32Array(MAX_TRAIL * 3), 3);
     const colorAttr = new THREE.BufferAttribute(new Float32Array(MAX_TRAIL * 3), 3);

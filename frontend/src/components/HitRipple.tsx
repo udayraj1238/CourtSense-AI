@@ -6,23 +6,32 @@ interface HitRippleProps {
   isHitting: boolean;
   position: [number, number, number];
   color?: string;
+  shotType?: string;
 }
 
-export const HitRipple: React.FC<HitRippleProps> = React.memo(({ isHitting, position, color = '#ffeb3b' }) => {
-  const [activeRipples, setActiveRipples] = useState<{ id: number, pos: [number, number, number], time: number }[]>([]);
+export const HitRipple: React.FC<HitRippleProps> = React.memo(({ isHitting, position, color = '#ffeb3b', shotType }) => {
+  const [activeRipples, setActiveRipples] = useState<{ id: number, pos: [number, number, number], time: number, color: string }[]>([]);
   const rippleIdRef = useRef(0);
   const wasHittingRef = useRef(false);
 
   useEffect(() => {
     if (isHitting && !wasHittingRef.current) {
+      const typeColor = ({
+        flat: '#60a5fa',
+        topspin: '#4ade80',
+        cross: '#fb923c',
+        slice: '#a78bfa',
+        lob: '#f472b6',
+      } as any)[shotType || ''] ?? color;
+
       // Trigger new ripple at ground level, under the ball position
       setActiveRipples(prev => [
         ...prev,
-        { id: rippleIdRef.current++, pos: [position[0], 0.02, position[2]], time: 0 }
+        { id: rippleIdRef.current++, pos: [position[0], 0.02, position[2]], time: 0, color: typeColor }
       ]);
     }
     wasHittingRef.current = isHitting;
-  }, [isHitting, position]);
+  }, [isHitting, position, shotType, color]);
 
   useFrame((_, delta) => {
     setActiveRipples(prev => {
@@ -45,7 +54,7 @@ export const HitRipple: React.FC<HitRippleProps> = React.memo(({ isHitting, posi
         return (
           <mesh key={r.id} position={r.pos} rotation={[-Math.PI / 2, 0, 0]} scale={scale}>
             <ringGeometry args={[0.85, 1.0, 32]} />
-            <meshBasicMaterial color={color} transparent opacity={opacity * 0.8} side={THREE.DoubleSide} />
+            <meshBasicMaterial color={r.color} transparent opacity={opacity * 0.8} side={THREE.DoubleSide} />
           </mesh>
         );
       })}

@@ -19,8 +19,9 @@ export interface ProcFrameData {
   ball: BallState;
   players: PlayerState[];
   ball_speed_kmh: number;
-  spin_rate_rpm: number;
-  hitter: 'p1' | 'p2' | null;
+  spin_rate_rpm?: number;
+  hitter?: 'p1' | 'p2' | null;
+  shot_type?: string;
 }
 
 export interface SequenceResponse {

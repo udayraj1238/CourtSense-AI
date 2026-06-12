@@ -12,7 +12,6 @@ import * as THREE from 'three';
 
 interface TennisSceneProps {
   ballPos: [number, number, number];
-  ballOccluded?: boolean;
   player1Pos: [number, number, number];
   player2Pos: [number, number, number];
   ballTrail?: { p: [number, number, number]; occ: boolean }[];
@@ -20,6 +19,7 @@ interface TennisSceneProps {
   p1Hitting?: boolean;
   p2Hitting?: boolean;
   isBouncing?: boolean;
+  shotType?: string;
 }
 
 const CAMERA_TARGETS: Record<string, [number, number, number]> = {
@@ -49,7 +49,6 @@ function CameraController({ preset }: { preset: string }) {
 
 export const TennisScene: React.FC<TennisSceneProps> = React.memo(({
   ballPos,
-  ballOccluded = false,
   player1Pos,
   player2Pos,
   ballTrail = [],
@@ -57,6 +56,7 @@ export const TennisScene: React.FC<TennisSceneProps> = React.memo(({
   p1Hitting = false,
   p2Hitting = false,
   isBouncing = false,
+  shotType,
 }) => {
   const initPos = CAMERA_TARGETS[cameraPreset] ?? CAMERA_TARGETS.default;
 
@@ -127,14 +127,13 @@ export const TennisScene: React.FC<TennisSceneProps> = React.memo(({
         {ballTrail.length > 1 && <BallTrail positions={ballTrail} />}
 
         {/* Ball */}
-        <Ball position={ballPos} isOccluded={ballOccluded} />
+        <Ball position={ballPos} />
 
         {/* Players */}
         <Player position={player1Pos} color="#4f9aff" accentColor="#1e3a6e" side="bottom" label="Player 1" isHitting={p1Hitting} />
         <Player position={player2Pos} color="#ff5a6e" accentColor="#7f1d2e" side="top"    label="Player 2" isHitting={p2Hitting} />
 
-        {/* Visual Hit/Bounce Indicators */}
-        <HitRipple isHitting={p1Hitting || p2Hitting || isBouncing} position={ballPos} color={isBouncing ? "#ffffff" : "#c8e600"} />
+        <HitRipple isHitting={p1Hitting || p2Hitting || isBouncing} position={ballPos} color={isBouncing ? "#ffffff" : "#c8e600"} shotType={shotType} />
 
         {/* Post-processing */}
         <Effects />

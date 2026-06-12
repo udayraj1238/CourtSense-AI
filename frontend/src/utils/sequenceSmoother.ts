@@ -94,7 +94,7 @@ function lightSmoothBall(seq: ProcFrameData[]) {
   if (!hasJitter) return; // synthesized data is already smooth — skip
 
   // 3-tap Gaussian: weights [0.15, 0.70, 0.15]
-  const smoothed = seq.map((f, i) => ({ ...f.ball.position }));
+  const smoothed = seq.map((f) => ({ ...f.ball.position }));
   for (let i = 1; i < seq.length - 1; i++) {
     const a = seq[i-1].ball.position;
     const b = seq[i].ball.position;

@@ -11,7 +11,7 @@ interface AnalyticsSidebarProps {
   distP1?: number;
   distP2?: number;
   rallyHits?: number;
-  shotHistory?: {frame:number, hitter:string, speed:number}[];
+  shotHistory?: {frame:number, hitter:string, speed:number, type?:string}[];
   onSeek?: (frame: number) => void;
   setIsPlaying?: (playing: boolean) => void;
 }
@@ -232,6 +232,14 @@ function MatchStats({ distP1 = 0, distP2 = 0, rallyHits = 0, avgSpeed = 0 }: { d
         </span>
       </div>
 
+      {/* Distance P2 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Player 2 Run</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 600, color: '#fff' }}>
+          {distP2.toFixed(1)} <span style={{ fontSize: '8px', color: 'var(--text-muted)' }}>m</span>
+        </span>
+      </div>
+
       {/* Average Shot Speed */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Avg Speed</span>
@@ -244,7 +252,7 @@ function MatchStats({ distP1 = 0, distP2 = 0, rallyHits = 0, avgSpeed = 0 }: { d
 }
 
 /* Shot History Card */
-function ShotHistoryCard({ shots, onSeek, setIsPlaying, currentFrame }: { shots: {frame:number, hitter:string, speed:number}[], onSeek: (f:number)=>void, setIsPlaying: (b:boolean)=>void, currentFrame: number }) {
+function ShotHistoryCard({ shots, onSeek, setIsPlaying, currentFrame }: { shots: {frame:number, hitter:string, speed:number, type?:string}[], onSeek: (f:number)=>void, setIsPlaying: (b:boolean)=>void, currentFrame: number }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
       <div style={{
@@ -276,7 +284,10 @@ function ShotHistoryCard({ shots, onSeek, setIsPlaying, currentFrame }: { shots:
                 transition: 'background 0.2s',
               }}
             >
-              <span style={{ fontSize: '9px', color: '#fff', fontWeight: 600 }}>{label}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                <span style={{ fontSize: '9px', color: '#fff', fontWeight: 600 }}>{label}</span>
+                {shot.type && <span style={{ fontSize: '7px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{shot.type}</span>}
+              </div>
               <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--accent)' }}>
                 {shot.speed.toFixed(0)} <span style={{ fontSize: '7px', color: 'var(--text-muted)' }}>km/h</span>
               </span>

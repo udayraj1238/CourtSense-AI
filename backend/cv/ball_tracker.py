@@ -6,7 +6,7 @@ from ultralytics import YOLO
 from backend.cv.homography import CourtProjector
 
 class BallTracker:
-    def __init__(self, model_path: str = "yolov8n_tennis.pt"):
+    def __init__(self, model_path: str = "yolov8_tennis_ball.pt"):
         # We use a custom fine-tuned YOLOv8 model for V5.0. 
         # In our custom dataset, class 0 is 'tennis_ball'.
         self.model = YOLO(model_path)
@@ -31,7 +31,11 @@ class BallTracker:
             boxes = results[0].boxes
             for box in boxes:
                 conf = float(box.conf[0])
-                if conf < 0.1: # low confidence threshold because motion blurred balls are hard
+                # Tennis-Vision dual-threshold pipeline variables
+                INITIAL_CONF = 0.15
+                FINAL_CONF = 0.60
+                
+                if conf < INITIAL_CONF: 
                     continue
                     
                 # Get center of bounding box

@@ -73,8 +73,7 @@ function App() {
   const [demoError, setDemoError] = useState<string | null>(null);
 
 
-  const [ballPos, setBallPos] = useState<[number, number, number]>([0, 1, 0]);
-  const [ballOccluded, setBallOccluded] = useState(false);
+  const [ballPos, setBallPos] = useState<[number, number, number]>([0, 0, 0]);
   const [p1Pos, setP1Pos] = useState<[number, number, number]>([0, 0, 10]);
   const [p2Pos, setP2Pos] = useState<[number, number, number]>([0, 0, -10]);
   const [ballSpeed, setBallSpeed] = useState(0);
@@ -90,7 +89,7 @@ function App() {
   const [currentDistP1, setCurrentDistP1] = useState(0);
   const [currentDistP2, setCurrentDistP2] = useState(0);
   const [currentHits, setCurrentHits] = useState(0);
-  const [shotHistory, setShotHistory] = useState<{frame:number, hitter:string, speed:number}[]>([]);
+  const [shotHistory, setShotHistory] = useState<{frame:number, hitter:string, speed:number, type?:string}[]>([]);
 
   // Client-side processing progress
   const [processingLabel, setProcessingLabel] = useState('');
@@ -113,7 +112,6 @@ function App() {
     if (fd.ball) {
       const np: [number, number, number] = [fd.ball.position.x, fd.ball.position.y, fd.ball.position.z];
       setBallPos(np);
-      setBallOccluded(fd.ball.is_occluded);
       trailRef.current = [...trailRef.current.slice(-15), { p: np, occ: fd.ball.is_occluded }];
       setBallTrail(trailRef.current.slice());
       if (heatRef.current.length === 0 || Math.random() > 0.67) {
@@ -177,7 +175,7 @@ function App() {
 
   const precomputeStats = useCallback((seq: FrameData[]) => {
     const newStats = [];
-    const shots: {frame:number, hitter:string, speed:number}[] = [];
+    const shots: {frame:number, hitter:string, speed:number, type?:string}[] = [];
     let d1 = 0, d2 = 0, hits = 0;
     let lastP1 = null, lastP2 = null, lastHitter = null;
     
@@ -201,7 +199,7 @@ function App() {
       // Wait for hit transition
       if (fd.hitter && fd.hitter !== lastHitter) {
          hits += 1;
-         shots.push({ frame: idx, hitter: fd.hitter, speed: fd.ball_speed_kmh || 0 });
+         shots.push({ frame: idx, hitter: fd.hitter, speed: fd.ball_speed_kmh || 0, type: fd.shot_type });
          lastHitter = fd.hitter;
       } else if (!fd.hitter && lastHitter) {
          // Reset hitter when null so next hit is counted
@@ -385,7 +383,7 @@ function App() {
   }, [appState, sequenceData]);
 
   /* --- Controls --- */
-  const resetSimulation = () => {
+  const resetSimulation = useCallback(() => {
     setIsPlaying(false);
     frameRef.current = 0; setFrame(0);
     trailRef.current = []; setBallTrail([]);
@@ -735,13 +733,13 @@ function App() {
         }>
           <TennisScene
             ballPos={ballPos}
-            ballOccluded={ballOccluded}
             player1Pos={p1Pos}
             player2Pos={p2Pos}
             ballTrail={ballTrail}
             cameraPreset={cameraPreset}
             p1Hitting={p1Hitting}
             p2Hitting={p2Hitting}
+            shotType={sequenceData[frame]?.shot_type}
           />
         </ErrorBoundary>
       </main>

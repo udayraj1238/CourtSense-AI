@@ -4,10 +4,9 @@ import * as THREE from 'three';
 
 interface BallProps {
   position: [number, number, number];
-  isOccluded?: boolean;
 }
 
-export const Ball: React.FC<BallProps> = React.memo(({ position, isOccluded = false }) => {
+export const Ball: React.FC<BallProps> = React.memo(({ position }) => {
   const ballRef  = useRef<THREE.Mesh>(null);
   const glowRef  = useRef<THREE.Mesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);

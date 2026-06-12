@@ -130,6 +130,9 @@ def detect_court_corners(frame: np.ndarray) -> np.ndarray:
     """
     Detect 4 court corners in pixel space (TL, TR, BR, BL).
     Raises CalibrationError if detection fails validation.
+    
+    TODO: Replace Hough lines with Tennis-Vision's keypoints_model.pth (ResNet-50)
+    to detect 14 court landmarks for better accuracy on clay/dark courts.
     """
     if frame is None or frame.size == 0:
         raise CalibrationError("Empty frame provided for calibration.")
