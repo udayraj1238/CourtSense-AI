@@ -556,12 +556,11 @@
 .viewer-footer {
   position: absolute;
   bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 20px;
   z-index: 10;
-  width: 100%;
+  width: auto;
+  min-width: 400px;
   max-width: 600px;
-  padding: 0 20px;
   display: flex;
   flex-direction: column;
   gap: 10px;
