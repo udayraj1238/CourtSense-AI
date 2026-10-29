@@ -2,17 +2,42 @@ name: Sync to Hugging Face hub
 on:
   push:
     branches: [main]
+    paths: ["backend/**", "requirements/**", "Dockerfile", ".dockerignore", ".github/workflows/huggingface.yml"]
   workflow_dispatch:
 
 jobs:
   sync-to-hub:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-          lfs: false
+      - uses: actions/checkout@v4
+
+      # Push a clean snapshot of only what the Space's Docker build needs.
+      # Pushing the full GitHub history (frontend assets, model weights) is
+      # rejected by the Hub, which is why every earlier sync failed.
+      - name: Build Space snapshot
+        run: |
+          mkdir -p /tmp/space
+          cp -r backend requirements Dockerfile .dockerignore /tmp/space/
+          cat > /tmp/space/README.md <<'MD'
+          ---
+          title: CourtSense Backend
+          emoji: 🎾
+          colorFrom: green
+          colorTo: blue
+          sdk: docker
+          app_port: 8000
+          ---
+          FastAPI backend for [CourtSense AI](https://github.com/udayraj1238/CourtSense-AI).
+          Synced automatically from the GitHub repo.
+          MD
+          sed -i 's/^          //' /tmp/space/README.md
+
       - name: Push to hub
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git push --force https://rajuday6002:$HF_TOKEN@huggingface.co/spaces/rajuday6002/courtsense-backend HEAD:main
+        run: |
+          cd /tmp/space
+          git init -q -b main
+          git -c user.name="github-actions" -c user.email="actions@github.com" add -A
+          git -c user.name="github-actions" -c user.email="actions@github.com" commit -q -m "Sync from GitHub ${GITHUB_SHA::7}"
+          git push --force "https://rajuday6002:${HF_TOKEN}@huggingface.co/spaces/rajuday6002/courtsense-backend" main

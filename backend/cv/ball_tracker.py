@@ -1,3 +1,5 @@
+import os
+
 import cv2
 import numpy as np
 from typing import Dict, Any, Optional
@@ -9,6 +11,11 @@ class BallTracker:
     def __init__(self, model_path: str = "yolov8_tennis_ball.pt"):
         # We use a custom fine-tuned YOLOv8 model for V5.0. 
         # In our custom dataset, class 0 is 'tennis_ball'.
+        # The fine-tuned weights are not committed (see .gitignore). If they are
+        # missing, fall back to stock YOLOv8n, which ultralytics downloads on first
+        # use, and detect COCO class 32 ("sports ball") instead.
+        if "tennis" in model_path and not os.path.exists(model_path):
+            model_path = "yolov8n.pt"
         self.model = YOLO(model_path)
         
         if "tennis" in model_path:

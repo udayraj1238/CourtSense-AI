@@ -56,7 +56,8 @@ def _collect_segments(mask: np.ndarray) -> list[tuple[float, float, float, float
     )
     if lines is None:
         return []
-    return [tuple(map(float, ln[0])) for ln in lines]
+    # OpenCV returns (N, 1, 4) in most builds but (N, 4) in some; normalise both.
+    return [tuple(map(float, ln)) for ln in np.asarray(lines).reshape(-1, 4)]
 
 
 def _cluster_lines(
