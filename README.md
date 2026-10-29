@@ -12,7 +12,7 @@ app_port: 8000
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0D9488,50:06B6D4,100:3B82F6&height=220&section=header&text=CourtSense%20AI&fontSize=50&fontColor=ffffff&animation=fadeIn&fontAlignY=35&desc=3D%20Tennis%20Analytics%20Engine&descSize=18&descAlignY=55&descAlign=50" width="100%"/>
 
 <!-- Typing SVG -->
-<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=06B6D4&center=true&vCenter=true&width=600&lines=Tennis+Video+%E2%86%92+Interactive+3D+Replay;YOLOv8-Pose+%7C+Hough+Lines+%7C+Three.js;Physics-Based+Synthesis+%26+Replays;150-Frame+Physics-Accurate+Replays" alt="Typing SVG" /></a>
+<a href="https://git.io/typing-svg"><img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=600&size=22&pause=1000&color=06B6D4&center=true&vCenter=true&width=600&lines=Tennis+Video+%E2%86%92+Interactive+3D+Replay;YOLOv8-Pose+%7C+Hough+Lines+%7C+Three.js;Physics-Based+Synthesis+%26+Replays;30+FPS+3D+Replays" alt="Typing SVG" /></a>
 
 <br/>
 <br/>
@@ -41,9 +41,9 @@ app_port: 8000
 <br/><br/>
 
 <!-- Stats Badges -->
-<img src="https://img.shields.io/badge/150%20Frames-Per%20Replay-0D9488?style=flat-square&labelColor=1a1a2e" />
+<img src="https://img.shields.io/badge/30%20FPS-Replays-0D9488?style=flat-square&labelColor=1a1a2e" />
 <img src="https://img.shields.io/badge/17%20Keypoints-Per%20Frame-06B6D4?style=flat-square&labelColor=1a1a2e" />
-<img src="https://img.shields.io/badge/~70%25%20Jitter-Reduction-3B82F6?style=flat-square&labelColor=1a1a2e" />
+<img src="https://img.shields.io/badge/6--Stage-CV%20Pipeline-3B82F6?style=flat-square&labelColor=1a1a2e" />
 <img src="https://img.shields.io/badge/±5%20km%2Fh-Speed%20Accuracy-8B5CF6?style=flat-square&labelColor=1a1a2e" />
 
 </div>
@@ -65,7 +65,7 @@ A raw tennis match video from **any camera angle** — broadcast footage, phone 
 <td width="50%">
 
 ### 📤 Output
-An **interactive 3D replay** you can rotate, zoom, and replay from any angle — with real-time **speed (km/h)** and **spin (rpm)** overlays.
+An **interactive 3D replay** you can rotate, zoom, and replay from any angle — with **ball speed (km/h)** and estimated **spin (rpm)** overlays. When the ball detector finds the ball in under 10% of frames, a physics-based rally synthesizer (gravity, 0.75 bounce restitution) reconstructs the trajectory from player movement, so speed and spin in that mode are estimates.
 
 </td>
 </tr>
@@ -81,11 +81,11 @@ An **interactive 3D replay** you can rotate, zoom, and replay from any angle —
 graph TD
     A[🎾 Tennis Match Video] --> B[YOLOv8-Pose]
     A --> C[Hough Line Detection]
-    A --> D[HSV + YOLO]
+    A --> D[YOLOv8 Ball Detector]
     
     B -->|17 COCO Keypoints| E[OpenCV Homography]
     C -->|Court Mask| E
-    D -->|Ball Position| F[Kalman Filter + EMA]
+    D -->|Ball Position| F[3D Kalman + Spline Gap-Fill]
     
     E -->|3D Coordinates| G[Physics Engine]
     F -->|Smooth Trajectory| G
@@ -139,13 +139,13 @@ Parabolic trajectories and Bezier bounces
 <tr>
 <td align="center">
 <img src="https://img.shields.io/badge/🎯-Ball_Tracking-EC4899?style=for-the-badge&labelColor=1a1a2e" /><br/>
-<b>HSV + YOLO Fusion</b><br/>
-Dual-method detection for reliability
+<b>YOLOv8 + 3D Kalman</b><br/>
+Physics fallback when detections are sparse
 </td>
 <td align="center">
 <img src="https://img.shields.io/badge/📊-Smoothing-F59E0B?style=for-the-badge&labelColor=1a1a2e" /><br/>
-<b>Kalman + EMA (α=0.3)</b><br/>
-~70% jitter reduction in 3D keypoints
+<b>One-Euro + Kalman</b><br/>
+Adaptive smoothing of player and ball tracks
 </td>
 <td align="center">
 <img src="https://img.shields.io/badge/🖥️-3D_Viewer-10B981?style=for-the-badge&labelColor=1a1a2e" /><br/>
@@ -170,9 +170,9 @@ No backend needed for processing
 |:------|:-----------|:--------|
 | 🧠 **Pose Estimation** | YOLOv8-Pose, MediaPipe | 17-keypoint skeleton extraction |
 | 🎨 **Court Mapping** | Hough Line Detection | Robust adaptive thresholding for lines |
-| 🎯 **Ball Tracking** | HSV Detection + YOLO | Dual-method fused ball detection |
+| 🎯 **Ball Tracking** | YOLOv8 + 3D Kalman | Detection, gap-filling, physics fallback |
 | 📐 **Mapping** | OpenCV Homography | 2D video → 3D real-world coordinates |
-| 📊 **Smoothing** | Kalman Filter, EMA | Trajectory denoising & stabilization |
+| 📊 **Smoothing** | Kalman, One-Euro, Spline | Trajectory denoising & stabilization |
 | ⚡ **Physics** | Physics-based trajectory synthesis | True Bezier bounce physics & speed estimation |
 | 🔌 **Backend** | FastAPI, Python | REST API + JSON coordinate streams |
 | 🖥️ **Frontend** | React, Three.js, TypeScript | Interactive 3D visualization |
@@ -232,20 +232,20 @@ cd frontend && npm install && npm run dev
 <table>
 <tr>
 <td align="center">
-<h3>150</h3>
-<sub>Frames per replay</sub>
+<h3>6</h3>
+<sub>Pipeline stages</sub>
 </td>
 <td align="center">
-<h3>~70%</h3>
-<sub>Jitter reduction</sub>
+<h3>17</h3>
+<sub>Pose keypoints per player</sub>
 </td>
 <td align="center">
-<h3>±5 km/h</h3>
-<sub>Speed accuracy</sub>
+<h3>5-frame</h3>
+<sub>Rolling-median speed</sub>
 </td>
 <td align="center">
-<h3>30+ FPS</h3>
-<sub>3D rendering</sub>
+<h3>30 FPS</h3>
+<sub>Normalized replays</sub>
 </td>
 </tr>
 </table>
