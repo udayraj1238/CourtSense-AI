@@ -2,3 +2,4 @@
 # GPU: replace ml-cpu with ml-gpu.txt (see requirements/ml-gpu.txt comment).
 -r requirements/base.txt
 -r requirements/cv.txt
+cv-benchkit>=0.1.0
